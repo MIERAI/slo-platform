@@ -5,6 +5,12 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- `docs/quickstart.md` (P4): from nothing to the first passing experiment on kind, with troubleshooting;
+  `docs/runbook.md`: what to do per alert (ErrorBudgetBurn per SLI type, SLOMetricAbsent, the regression's tickets).
+- `scripts/e2e.sh`: the template instantiated end to end on a throwaway kind cluster without GitHub (an in-cluster git
+  server serves this checkout and an `init` instance; `bootstrap/tofu/kind`; every Application Synced + Healthy;
+  `--experiment`: sample-app-down must PASS; diagnosis on failure). Workflow `e2e`: weekly, on `v*` tags (with the
+  experiment), on pull requests that change it, on demand.
 - The instance model (P2): your repository holds `platform.yaml` (apiVersion slo-platform/v1) and `apps/`; the platform
   comes from this repository at `product.version`. Root chart `platform/root` (values = platform.yaml + `cluster`;
   roles prod / lab; self-managed root Application; time zones with their standard offset), replacing `apps/`.
