@@ -1,0 +1,11 @@
+context: kind-slo-lab; Prometheus: monitoring/kps-prometheus:9090
+15:41:37 [sample-app-down] hypothesis: Every sample-app pod fails — users get connection errors on /hello. That is the worst outage there is, so it must page within 10 minutes — through the probe SLO.
+15:41:37 [sample-app-down] fault created in sample-app-dev: PodChaos/sample-app-all-down
+15:41:43 [sample-app-down] ✓ fault injected (5s)
+15:41:58 [sample-app-down] ✓ fault takes effect (15s): max(probe_success{namespace="sample-app-dev"}) == 0
+15:44:14 [sample-app-down] ✓ fired after 2.6 min: ErrorBudgetBurn {'namespace': 'sample-app-dev', 'slo': 'sample-app-hello-probe', 'severity': 'page', 'long': '1h'}
+15:44:20 [sample-app-down] fault removed after 2.7 min
+15:49:23 [sample-app-down] ✓ resolved 5.1 min after the fault: ErrorBudgetBurn {'namespace': 'sample-app-dev', 'slo': 'sample-app-hello-probe', 'severity': 'page', 'long': '1h'}
+15:49:23 [sample-app-down] PASS
+
+PASS     sample-app-down  (apps/sample-app/experiments/results/2026-11-21-sample-app-down.md)
