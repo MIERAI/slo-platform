@@ -1,4 +1,4 @@
-"""Application descriptors (apps/<app>/app.yaml of an instance repository, examples/<app>/app.yaml here; reference:
+"""Application descriptors (<apps>/<app>/app.yaml of an instance repository, <apps> = platform.yaml instance.apps, examples/<app>/app.yaml here; reference:
 docs/app-yaml.md): the one place an application is registered. The ApplicationSet (platform/root/files/
 applicationset.yaml) derives the Argo CD Applications from them; the scripts derive the same here — which file holds an
 image in an environment, and how to render each Application.
@@ -14,7 +14,40 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required (apt install python3-yaml, or pip install pyyaml)")
 
-APPS = "apps"   # where app.yaml files live in an instance: keep in step with the ApplicationSet's git generator
+APPS = "apps"   # where app.yaml files live in an instance by default (platform.yaml instance.apps): keep in step
+                # with the root chart (values.yaml, root.appsGlob)
+# namespace metadata the platform sets itself: app.yaml / platform.yaml cannot override it
+OWN_LABEL_PREFIX = "slo-platform/"
+OWN_ANNOTATIONS = {"chaos-mesh.org/inject": "enabled"}
+
+
+def apps_dir(platform):
+    """Where an instance keeps its applications (platform.yaml instance.apps; "." = the repository root)."""
+    return str(((platform or {}).get("instance") or {}).get("apps") or APPS)
+
+
+def experiment_dirs(platform):
+    """The experiment directories (globs, relative to the instance) of platform.yaml regression.experiments, default
+    <apps>/*/experiments (keep in step with the root chart's root.experiments)."""
+    x = ((platform or {}).get("regression") or {}).get("experiments")
+    if not x:
+        a = apps_dir(platform)
+        return ["*/experiments" if a == "." else f"{a}/*/experiments"]
+    return [x] if isinstance(x, str) else list(x)
+
+
+def namespace_metadata(d, env, platform=None):
+    """{labels, annotations} Argo CD gives namespace <name>-<env> (the ApplicationSet's managedNamespaceMetadata):
+    platform.yaml applications.namespaceLabels / namespaceAnnotations, app.yaml namespace.labels / annotations over
+    them, the platform's own (slo-platform/*, chaos-mesh.org/inject) over both."""
+    a = (platform or {}).get("applications") or {}
+    ns = d.get("namespace") or {}
+    labels = {**(a.get("namespaceLabels") or {}), **(ns.get("labels") or {}),
+              "slo-platform/app": d["name"], "slo-platform/env": env}
+    if d.get("signedImages"):
+        labels["slo-platform/image-signatures"] = "required"
+    annotations = {**(a.get("namespaceAnnotations") or {}), **(ns.get("annotations") or {}), **OWN_ANNOTATIONS}
+    return {"labels": labels, "annotations": annotations}
 
 
 def load(app, root="."):

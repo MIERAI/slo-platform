@@ -7,8 +7,8 @@
   slo-platform check [<dir>]
   slo-platform upgrade --version <ref> [<dir>]
 
-The instance repository holds only configuration: platform.yaml, apps/<app>/ (app.yaml, manifests, experiments),
-secrets/<cluster>.sops.yaml, .sops.yaml. The platform itself comes from the product repository at product.version.
+The instance repository holds only configuration: platform.yaml, <apps>/<app>/ (app.yaml, manifests, experiments;
+<apps> = instance.apps, default apps), secrets/<cluster>.sops.yaml, .sops.yaml. The platform itself comes from the product repository at product.version.
 
 `check` validates platform.yaml against platform/root/values.schema.json of this product checkout when it exists (the
 same file Helm validates the root chart's values with), else against the built-in SCHEMA below that mirrors it; then
@@ -39,6 +39,16 @@ DEFAULT_AGE_KEY = os.path.join("~", ".config", "sops", "age", "keys.txt")
 NAME = r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"            # a DNS label (namespaces are <app>-<env>)
 REF = r"^[A-Za-z0-9][A-Za-z0-9._/-]*$"                # a git ref: branch or tag
 DURATION = re.compile(r"^([0-9]+(ms|s|m|h|d|w|y))+$")
+SEG, GSEG = r"[A-Za-z0-9_][A-Za-z0-9._-]*", r"[A-Za-z0-9_*?\[-][A-Za-z0-9._*?\[\]-]*"
+APPS_DIR = rf"^(\.|{SEG}(/{SEG})*)$"                   # instance.apps: relative, no ..
+XGLOB = rf"^(\.|{GSEG}(/{GSEG})*)$"                    # regression.experiments: relative globs, no ..
+LABEL_KEY = r"^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$"
+LABEL_VALUE = r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$"
+# platform components (components.<name>): Helm-sourced ones take values, kustomize-sourced ones do not
+HELM_COMPONENTS = ("monitoring", "blackbox", "chaos-mesh", "experiments")
+KUSTOMIZE_COMPONENTS = ("pyrra", "cert-manager", "argo-rollouts", "cnpg", "kyverno", "policies", "object-storage")
+OWN_LABEL_PREFIX = "slo-platform/"                    # namespace metadata the platform sets (always wins)
+OWN_ANNOTATIONS = ("chaos-mesh.org/inject",)
 
 # platform.yaml (apiVersion slo-platform/v1): the built-in mirror of platform/root/values.schema.json, used when this
 # checkout has no schema file. JSON schema, the subset validate() implements.
@@ -53,7 +63,8 @@ SCHEMA = {
             "version": {"type": "string", "pattern": REF}}},
         "instance": {"type": "object", "required": ["repo", "revision"], "additionalProperties": False, "properties": {
             "repo": {"type": "string", "pattern": r"^(https://|ssh://|git@)\S+$"},
-            "revision": {"type": "string", "pattern": REF}}},
+            "revision": {"type": "string", "pattern": REF},
+            "apps": {"type": "string", "pattern": APPS_DIR}}},
         "timezone": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$"},
         "language": {"enum": ["en", "zh", "ja"]},
         "clusters": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": NAME, "maxLength": 40},
@@ -62,13 +73,29 @@ SCHEMA = {
                          "properties": {
                              "role": {"enum": ["prod", "lab"]},
                              "runtime": {"enum": ["kind", "k3s", "generic"]},
-                             "objectStorage": {"enum": ["none", "in-cluster"]}}}},
+                             "objectStorage": {"enum": ["none", "in-cluster"]},
+                             "extras": {"type": "array", "items": {
+                                 "type": "object", "required": ["name", "path"], "additionalProperties": False,
+                                 "properties": {"name": {"type": "string", "pattern": NAME, "maxLength": 46},
+                                                "path": {"type": "string", "pattern": rf"^{SEG}(/{SEG})*$"}}}}}}},
         "optional": {"type": "object", "additionalProperties": False,
                      "properties": {"policies": {"type": "boolean"}}},
+        "applications": {"type": "object", "additionalProperties": False, "properties": {
+            "namespaceLabels": {"type": "object", "propertyNames": {"pattern": LABEL_KEY},
+                                "additionalProperties": {"type": "string", "pattern": LABEL_VALUE, "maxLength": 63}},
+            "namespaceAnnotations": {"type": "object", "propertyNames": {"pattern": LABEL_KEY},
+                                     "additionalProperties": {"type": "string"}}}},
+        "components": {"type": "object", "additionalProperties": False, "properties": {
+            **{c: {"type": "object", "additionalProperties": False,
+                   "properties": {"enabled": {"type": "boolean"}, "values": {"type": "object"}}} for c in HELM_COMPONENTS},
+            **{c: {"type": "object", "additionalProperties": False,
+                   "properties": {"enabled": {"type": "boolean"}}} for c in KUSTOMIZE_COMPONENTS}}},
         "grafana": {"type": "object", "additionalProperties": False,
                     "properties": {"adminSecret": {"type": "string", "pattern": NAME}}},
         "regression": {"type": "object", "additionalProperties": False, "properties": {
-            "schedule": {"type": "string", "pattern": r"^\S+( \S+){4}$"}}},
+            "schedule": {"type": "string", "pattern": r"^\S+( \S+){4}$"},
+            "experiments": {"oneOf": [{"type": "string", "pattern": XGLOB},
+                                      {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": XGLOB}}]}}},
         "traffic": {"type": "object", "additionalProperties": False, "properties": {
             "dayMinutes": {"type": "integer", "minimum": 1, "maximum": 1440}}},
         "notify": {"type": "object", "additionalProperties": False, "properties": {   # values.schema.json has each type's fields
@@ -224,7 +251,23 @@ def check_platform(p, problems, product=None):
         errs = validate(merged, schema)
     else:
         errs = validate(p, SCHEMA)
-    problems += [f"platform.yaml: {e}" for e in dict.fromkeys(errs)]
+    kust_values = {f".components.{c}.values: unknown key" for c in KUSTOMIZE_COMPONENTS}
+    for e in dict.fromkeys(errs):
+        if e in kust_values:
+            c = e.split(".")[2]
+            problems.append(f"platform.yaml: .components.{c}.values: {c} is installed from kustomize manifests, not a "
+                            f"Helm chart: it takes no values (only enabled; Helm-sourced: {', '.join(HELM_COMPONENTS)})")
+        else:
+            problems.append(f"platform.yaml: {e}")
+    apps_meta = p.get("applications") if isinstance(p.get("applications"), dict) else {}
+    for kind, where in (("labels", "namespaceLabels"), ("annotations", "namespaceAnnotations")):
+        for k in reserved_metadata(apps_meta.get(where), kind):
+            problems.append(f"platform.yaml: .applications.{where}: {k} is set by the platform (it always wins)")
+    for name, c in (p.get("clusters") or {}).items() if isinstance(p.get("clusters"), dict) else []:
+        extras = c.get("extras") if isinstance(c, dict) else None
+        names = [x.get("name") for x in extras or [] if isinstance(x, dict)]
+        for n in sorted({n for n in names if names.count(n) > 1}):
+            problems.append(f"platform.yaml: .clusters.{name}.extras: {n} twice (the Application is extras-<name>)")
     tz = p.get("timezone")
     if isinstance(tz, str) and not any(e.startswith(".timezone") for e in errs):
         try:
@@ -234,6 +277,33 @@ def check_platform(p, problems, product=None):
             pass
         except Exception:
             problems.append(f"platform.yaml: .timezone: unknown time zone {tz!r} (an IANA name, e.g. Europe/Berlin)")
+
+
+def reserved_metadata(m, kind):
+    """Keys of a namespace labels / annotations map that the platform sets itself."""
+    if not isinstance(m, dict):
+        return []
+    if kind == "labels":
+        return [k for k in m if str(k).startswith(OWN_LABEL_PREFIX)]
+    return [k for k in m if k in OWN_ANNOTATIONS]
+
+
+def apps_dir(p):
+    """platform.yaml instance.apps (default apps; "." = the repository root); an invalid one counts as the default
+    (the schema reports it)."""
+    a = ((p or {}).get("instance") or {}).get("apps") if isinstance(p, dict) else None
+    return a if isinstance(a, str) and re.match(APPS_DIR, a) else "apps"
+
+
+def experiment_dirs(p):
+    """platform.yaml regression.experiments as a list of globs (default <apps>/*/experiments)."""
+    x = ((p or {}).get("regression") or {}).get("experiments") if isinstance(p, dict) else None
+    if isinstance(x, str):
+        x = [x]
+    if not isinstance(x, list) or not x or not all(isinstance(g, str) and re.match(XGLOB, g) for g in x):
+        a = apps_dir(p)
+        return ["*/experiments" if a == "." else f"{a}/*/experiments"]
+    return x
 
 
 SLI_TYPES = {   # SLI type: required fields (docs/app-yaml.md); probe: service+port+path or url
@@ -246,10 +316,12 @@ SLI_TYPES = {   # SLI type: required fields (docs/app-yaml.md); probe: service+p
 }
 
 
-def check_app(d, app_dir, problems):
-    """One apps/<app>/app.yaml (docs/app-yaml.md). Returns {env names}, {slo name: environments or None}."""
+def check_app(d, app_dir, problems, rel=None):
+    """One <apps>/<app>/app.yaml (docs/app-yaml.md); rel: its directory as the messages name it (default apps/<app>).
+    Returns {env names}, {slo name: environments or None}."""
     name = os.path.basename(app_dir)
-    where = f"apps/{name}/app.yaml"
+    rel = rel or f"apps/{name}"
+    where = f"{rel}/app.yaml"
     bad = lambda msg: problems.append(f"{where}: {msg}")   # noqa: E731
     if not isinstance(d, dict):
         bad("not a mapping")
@@ -300,7 +372,28 @@ def check_app(d, app_dir, problems):
                 need = [f"{sub}/{e}/kustomization.yaml" for e in envs]
             for f in need:
                 if not os.path.exists(os.path.join(app_dir, f)):
-                    bad(f"components[{cn}]: apps/{name}/{f} does not exist")
+                    bad(f"components[{cn}]: {rel}/{f} does not exist")
+    ns = d.get("namespace")
+    if ns is not None:
+        if not isinstance(ns, dict) or set(ns) - {"labels", "annotations"}:
+            bad("namespace: a mapping with labels and / or annotations")
+        else:
+            for kind in ("labels", "annotations"):
+                m = ns.get(kind)
+                if m is None:
+                    continue
+                if not isinstance(m, dict):
+                    bad(f"namespace.{kind}: a mapping")
+                    continue
+                for k, v in m.items():
+                    if not isinstance(k, str) or not re.match(LABEL_KEY, k):
+                        bad(f"namespace.{kind}: {k!r} is not a valid key")
+                    if not isinstance(v, str):
+                        bad(f"namespace.{kind}.{k}: a string, not {v!r} (quote it)")
+                    elif kind == "labels" and (len(v) > 63 or not re.match(LABEL_VALUE, v)):
+                        bad(f"namespace.labels.{k}: {v!r} is not a valid label value")
+                for k in reserved_metadata(m, kind):
+                    bad(f"namespace.{kind}: {k} is set by the platform (it always wins)")
     for i, s in enumerate(d.get("services") or []):
         if not isinstance(s, dict) or s.get("component") not in comps:
             bad(f"services[{i}]: component {s.get('component') if isinstance(s, dict) else s!r} is not a component")
@@ -496,21 +589,42 @@ def check(instance):
     pf = os.path.join(instance, "platform.yaml")
     if not os.path.exists(pf):
         return [f"{pf}: missing (create an instance with `slo-platform init`)"]
-    check_platform(load_yaml(pf, problems), problems)
+    p = load_yaml(pf, problems)
+    check_platform(p, problems)
+    for name, c in ((p or {}).get("clusters") or {}).items() if isinstance(p, dict) and isinstance(p.get("clusters"), dict) else []:
+        for i, x in enumerate((c.get("extras") or []) if isinstance(c, dict) and isinstance(c.get("extras"), list) else []):
+            path = x.get("path") if isinstance(x, dict) else None
+            if isinstance(path, str) and ".." not in path.split("/") and not os.path.isdir(os.path.join(instance, path)):
+                problems.append(f"platform.yaml: .clusters.{name}.extras[{i}].path: {path} is not a directory of the instance")
     apps = {}
-    for f in sorted(glob.glob(os.path.join(instance, "apps", "*", "app.yaml"))):
+    for f in app_files(instance, p):
         d = os.path.dirname(f)
         n = len(problems)
         data = load_yaml(f, problems)
         if len(problems) == n:
-            apps[os.path.basename(d)] = check_app(data, d, problems)
+            apps[os.path.basename(d)] = check_app(data, d, problems, os.path.relpath(d, instance))
     seen = {}
-    for f in sorted(glob.glob(os.path.join(instance, "apps", "*", "experiments", "*.yaml"))):
+    for f in experiment_files(instance, p):
         n = len(problems)
         data = load_yaml(f, problems)
         if len(problems) == n:
             check_experiment(data, f, apps, problems, seen)
     return problems
+
+
+def app_files(instance, p):
+    """Every <apps>/<app>/app.yaml of the instance (instance.apps of platform.yaml p)."""
+    return sorted(glob.glob(os.path.join(instance, apps_dir(p), "*", "app.yaml")))
+
+
+def experiment_files(instance, p):
+    """Every *.yaml of the experiment directories (regression.experiments of platform.yaml p), each once."""
+    out = []
+    for g in experiment_dirs(p):
+        for d in sorted(glob.glob(os.path.join(instance, g))):
+            if os.path.isdir(d):
+                out += sorted(glob.glob(os.path.join(d, "*.yaml")))
+    return list(dict.fromkeys(out))
 
 
 # ---------------------------------------------------------------- init
@@ -827,8 +941,8 @@ def main(argv=None):
                 return 1
             for w in notify_warnings(a.dir):
                 print(f"! {w}", file=sys.stderr)
-            n = len(glob.glob(os.path.join(a.dir, "apps", "*", "app.yaml")))
-            x = len(glob.glob(os.path.join(a.dir, "apps", "*", "experiments", "*.yaml")))
+            p = load_yaml(os.path.join(a.dir, "platform.yaml"), [])
+            n, x = len(app_files(a.dir, p)), len(experiment_files(a.dir, p))
             print(f"✓ platform.yaml, {n} application(s), {x} experiment(s)")
         elif a.cmd == "upgrade":
             upgrade(a.dir, a.version)

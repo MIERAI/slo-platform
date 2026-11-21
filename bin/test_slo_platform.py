@@ -311,6 +311,120 @@ class Check(Tmp):
         self.assertIn("1 problem(s)", err.getvalue())
 
 
+class ExistingRepository(Tmp):
+    """instance.apps, regression.experiments, clusters.*.extras, components, namespace metadata: an existing GitOps
+    repository with its applications at the root, against the built-in schema and the product's values.schema.json."""
+
+    def setUp(self):
+        super().setUp()
+        d = self.instance()
+        self.d = os.path.join(self.tmp, "existing")      # the same instance, applications moved to the root
+        os.makedirs(os.path.join(self.d, "experiments"))
+        os.makedirs(os.path.join(self.d, "clusters", "lab"))
+        for app in ("sample-app", "storefront"):
+            shutil.move(os.path.join(d, "apps", app), os.path.join(self.d, app))
+            for x in os.listdir(os.path.join(self.d, app, "experiments")):
+                shutil.move(os.path.join(self.d, app, "experiments", x), os.path.join(self.d, "experiments", x))
+            os.rmdir(os.path.join(self.d, app, "experiments"))
+        self.p = os.path.join(self.d, "platform.yaml")
+        shutil.move(os.path.join(d, "platform.yaml"), self.p)
+        self.sf = os.path.join(self.d, "storefront", "app.yaml")
+        self.edit(self.p, lambda p: (p["instance"].update(apps="."), p["regression"].update(experiments="experiments"),
+                                     p["clusters"]["lab"].update(extras=[{"name": "lab", "path": "clusters/lab"}])))
+
+    def problems(self, real_schema=False):
+        if not real_schema:
+            return self.check(self.d)
+        return sp.check(self.d)     # this checkout: platform/root/values.schema.json
+
+    def assertProblem(self, needle, real_schema=None):
+        for real in ((False, True) if real_schema is None else (real_schema,)):
+            problems = self.problems(real)
+            self.assertTrue(any(needle in p for p in problems), f"{needle!r} not in {problems} (schema file: {real})")
+
+    def test_clean(self):
+        for real in (False, True):
+            self.assertEqual(self.problems(real), [])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            orig, sp.PRODUCT = sp.PRODUCT, self.product
+            try:
+                self.assertEqual(sp.main(["check", self.d]), 0)
+            finally:
+                sp.PRODUCT = orig
+        self.assertIn("2 application(s), 14 experiment(s)", out.getvalue())
+
+    def test_default_layout_finds_nothing(self):
+        """Without instance.apps the root's applications are not found: their experiments name unknown namespaces."""
+        self.edit(self.p, lambda p: p["instance"].pop("apps"))
+        self.assertProblem("is not <app>-<env> of an application here (none)")
+
+    def test_apps_and_experiments_paths(self):
+        self.edit(self.sf, lambda d: d.update(name="shop"))
+        self.assertProblem("storefront/app.yaml: name 'shop'")     # named relative to the instance, no apps/
+        for apps in ("../elsewhere", "/abs", "a/../b"):
+            self.edit(self.p, lambda p: p["instance"].update(apps=apps))
+            self.assertProblem(".instance.apps")
+        self.edit(self.p, lambda p: (p["instance"].update(apps="."), p["regression"].update(experiments=["../x"])))
+        self.assertProblem(".regression.experiments")
+
+    def test_experiment_globs(self):
+        self.edit(self.p, lambda p: p["regression"].update(experiments=["experiments", "*/experiments"]))
+        self.assertEqual(self.problems(), [])
+        with open(os.path.join(self.d, "experiments", "broken.yaml"), "w") as f:
+            f.write("namespace: nowhere\nfault: []\nexpect: {}\n")
+        self.assertProblem("broken.yaml: namespace 'nowhere'")
+        self.edit(self.p, lambda p: p["regression"].update(experiments="elsewhere"))
+        self.assertEqual(self.problems(), [])      # nothing there: no experiments, no problem
+
+    def test_extras(self):
+        self.edit(self.p, lambda p: p["clusters"]["lab"].update(extras=[{"name": "lab", "path": "clusters/nowhere"}]))
+        self.assertProblem(".clusters.lab.extras[0].path: clusters/nowhere is not a directory of the instance")
+        self.edit(self.p, lambda p: p["clusters"]["lab"].update(extras=[{"name": "a", "path": "clusters/lab"}] * 2))
+        self.assertProblem(".clusters.lab.extras: a twice")
+        for bad in ({"name": "a"}, {"name": "Big", "path": "x"}, {"name": "a", "path": "../x"}, {"name": "a", "path": "x", "y": 1}):
+            self.edit(self.p, lambda p: p["clusters"]["lab"].update(extras=[bad]))
+            self.assertProblem(".clusters.lab.extras[0]")
+
+    def test_components(self):
+        self.edit(self.p, lambda p: p.update(components={
+            "monitoring": {"values": {"grafana": {"enabled": False}}}, "pyrra": {"enabled": False},
+            "chaos-mesh": {"enabled": False, "values": {}}}))
+        for real in (False, True):
+            self.assertEqual(self.problems(real), [])
+        self.edit(self.p, lambda p: p.update(components={"cnpg": {"values": {"x": 1}}}))
+        self.assertProblem(".components.cnpg.values: cnpg is installed from kustomize manifests, not a Helm chart")
+        self.edit(self.p, lambda p: p.update(components={"grafana": {"enabled": False}}))
+        self.assertProblem(".components.grafana: unknown key")
+        self.edit(self.p, lambda p: p.update(components={"monitoring": {"enabled": "no"}}))
+        self.assertProblem(".components.monitoring.enabled: must be boolean")
+
+    def test_namespace_metadata(self):
+        self.edit(self.p, lambda p: p.update(applications={"namespaceLabels": {"example.com/policies": "enforced"},
+                                                           "namespaceAnnotations": {"example.com/note": "any text"}}))
+        self.edit(self.sf, lambda d: d.update(namespace={"labels": {"example.com/signed": "required"},
+                                                         "annotations": {"note": "x y"}}))
+        for real in (False, True):
+            self.assertEqual(self.problems(real), [])
+        for meta, needle in (({"namespaceLabels": {"slo-platform/app": "x"}}, "slo-platform/app is set by the platform"),
+                             ({"namespaceAnnotations": {"chaos-mesh.org/inject": "x"}}, "chaos-mesh.org/inject is set"),
+                             ({"namespaceLabels": {"a": "not valid"}}, ".applications.namespaceLabels.a"),
+                             ({"namespaceLabels": {"a": True}}, ".applications.namespaceLabels.a"),
+                             ({"labels": {}}, ".applications.labels: unknown key")):
+            self.edit(self.p, lambda p: p.update(applications=meta))
+            self.assertProblem(needle)
+        self.edit(self.p, lambda p: p.pop("applications"))
+        for ns, needle in (({"labels": {"slo-platform/env": "x"}}, "namespace.labels: slo-platform/env is set by the platform"),
+                           ({"annotations": {"chaos-mesh.org/inject": "no"}}, "namespace.annotations: chaos-mesh.org/inject"),
+                           ({"labels": {"a": True}}, "namespace.labels.a: a string"),
+                           ({"labels": {"a": "b c"}}, "namespace.labels.a: 'b c' is not a valid label value"),
+                           ({"labels": {"-a": "b"}}, "namespace.labels: '-a' is not a valid key"),
+                           ({"label": {}}, "namespace: a mapping with labels and / or annotations"),
+                           ({"labels": ["a"]}, "namespace.labels: a mapping")):
+            self.edit(self.sf, lambda d: d.update(namespace=ns))
+            self.assertProblem(needle, real_schema=False)
+
+
 class Notify(Tmp):
     """notify: the product's real values.schema.json, the secret keys receivers need, the warnings of `check`."""
     PROD = [{"name": "home", "role": "prod", "runtime": "k3s", "objectStorage": "none"}] + LAB

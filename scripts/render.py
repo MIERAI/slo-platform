@@ -1,7 +1,8 @@
 """Render what Argo CD renders for one cluster of an instance: the root chart (platform/root, values = the instance's
 platform.yaml + cluster), then every Application it makes whose source is the product or the instance repository,
-including those the ApplicationSet derives from each apps/<app>/app.yaml: a kustomize directory (kubectl kustomize)
-or a Helm chart with value files / a values object (helm template). Applications of external charts (Argo CD fetches
+including those the ApplicationSet derives from each <apps>/<app>/app.yaml (platform.yaml instance.apps): a kustomize
+directory (kubectl kustomize), a directory of plain manifests (e.g. clusters.<name>.extras without a kustomization) or
+a Helm chart with value files / a values object (helm template). Applications of external charts (Argo CD fetches
 them from their Helm repositories) and the root Application itself are listed by `root` only. Used by validate.sh and
 the scripts.
 
@@ -12,8 +13,9 @@ the scripts.
                                                                   and the list (as `list`) on stdout
 options:
   --instance DIR    the instance repository's checkout (default: a temporary instance assembled from the product's
-                    examples/: apps/<app> = examples/<app>, platform.yaml = platform/root/ci/platform.yaml)
-  --platform FILE   its platform.yaml (default: <instance>/platform.yaml)
+                    examples/, laid out as --platform says: see example_instance)
+  --platform FILE   its platform.yaml (default: <instance>/platform.yaml; without --instance:
+                    platform/root/ci/platform.yaml)
   --cluster NAME    which cluster (default: the first one in platform.yaml)
 product: the product checkout (default: this one; e.g. the PR's base). Needs helm, kubectl and PyYAML.
 """
@@ -32,22 +34,42 @@ import yaml  # noqa: E402   (appdesc has checked it is there)
 
 PRODUCT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLE_PLATFORM = os.path.join("platform", "root", "ci", "platform.yaml")
-_examples = {}   # product → assembled instance directory (one per process)
+_examples = {}   # (product, platform.yaml) → assembled instance directory (one per process)
 
 
-def example_instance(product=PRODUCT):
-    """A temporary instance repository made of the product's examples, as `init` would copy them."""
+def example_instance(product=PRODUCT, platform=None):
+    """A temporary instance repository made of the product's examples, laid out as platform.yaml (default
+    platform/root/ci/platform.yaml) says: each examples/<app> at <instance.apps>/<app> (as `init` copies them); when
+    regression.experiments is one plain directory (no glob), the experiments move there from the applications'
+    experiments/; then the files of the directory next to that platform.yaml with its name (platform/root/ci/<name>/,
+    e.g. what clusters.*.extras point to), if there is one, are copied over the result."""
     product = os.path.abspath(product)
-    if product not in _examples:
+    platform = os.path.abspath(platform or os.path.join(product, EXAMPLE_PLATFORM))
+    key = (product, platform)
+    if key not in _examples:
+        with open(platform) as f:
+            values = yaml.safe_load(f) or {}
         d = tempfile.mkdtemp(prefix="slo-instance-")
         atexit.register(shutil.rmtree, d, True)
-        os.makedirs(os.path.join(d, "apps"))
+        apps = os.path.normpath(os.path.join(d, appdesc.apps_dir(values)))
+        os.makedirs(apps, exist_ok=True)
+        xdirs = appdesc.experiment_dirs(values)
+        moved = xdirs[0] if len(xdirs) == 1 and not glob.has_magic(xdirs[0]) else None
         for f in sorted(glob.glob(os.path.join(product, "examples", "*", "app.yaml"))):
             app = os.path.dirname(f)
-            shutil.copytree(app, os.path.join(d, "apps", os.path.basename(app)))
-        shutil.copy(os.path.join(product, EXAMPLE_PLATFORM), os.path.join(d, "platform.yaml"))
-        _examples[product] = d
-    return _examples[product]
+            dst = os.path.join(apps, os.path.basename(app))
+            shutil.copytree(app, dst)
+            if moved and os.path.isdir(os.path.join(dst, "experiments")):
+                os.makedirs(os.path.join(d, moved), exist_ok=True)
+                for x in glob.glob(os.path.join(dst, "experiments", "*.yaml")):
+                    shutil.move(x, os.path.join(d, moved, os.path.basename(x)))
+                shutil.rmtree(os.path.join(dst, "experiments"))
+        extra = os.path.splitext(platform)[0]
+        if os.path.isdir(extra):
+            shutil.copytree(extra, d, dirs_exist_ok=True)
+        shutil.copy(platform, os.path.join(d, "platform.yaml"))
+        _examples[key] = d
+    return _examples[key]
 
 
 def _run(cmd, what, stdin=""):
@@ -60,7 +82,7 @@ def _run(cmd, what, stdin=""):
 def context(product=".", instance=None, platform=None, cluster=None):
     """→ {product, instance, platform (file), values, cluster}: what one rendering is for."""
     product = os.path.abspath(product)
-    instance = os.path.abspath(instance) if instance else example_instance(product)
+    instance = os.path.abspath(instance) if instance else example_instance(product, platform)
     platform = os.path.abspath(platform) if platform else os.path.join(instance, "platform.yaml")
     with open(platform) as f:
         values = yaml.safe_load(f) or {}
@@ -104,7 +126,7 @@ def _day(ctx):
 
 def apps(root=".", instance=None, platform=None, cluster=None):
     """Every Application of the cluster whose source is the product (root: its checkout) or the instance repository,
-    then those the ApplicationSet derives from every apps/<app>/app.yaml. Each: name, path, namespace, values (value
+    then those the ApplicationSet derives from every <apps>/<app>/app.yaml. Each: name, path, namespace, values (value
     files relative to the path), release, enforced (an application's, not the platform's), root (the checkout path is
     relative to), values_object (if any)."""
     ctx = context(root, instance, platform, cluster)
@@ -137,9 +159,23 @@ def apps(root=".", instance=None, platform=None, cluster=None):
     return out
 
 
+KUSTOMIZATIONS = ("kustomization.yaml", "kustomization.yml", "Kustomization")
+
+
 def render(app, root="."):
     """The manifests of one Application (an entry of apps())."""
     d = os.path.join(app.get("root", root), app["path"])
+    if not os.path.isdir(d):
+        sys.exit(f"{app['name']}: {app['path']} does not exist in {app.get('root', root)}")
+    if not os.path.exists(os.path.join(d, "Chart.yaml")) and not any(
+            os.path.exists(os.path.join(d, k)) for k in KUSTOMIZATIONS):
+        # plain manifests (Argo CD's directory source, not recursive): its YAML / JSON files as they are
+        docs = []
+        for f in sorted(glob.glob(os.path.join(d, "*"))):
+            if os.path.isfile(f) and f.endswith((".yaml", ".yml", ".json")):
+                with open(f) as fh:
+                    docs.append(fh.read().strip("\n"))
+        return "\n---\n".join(docs) + "\n"
     if os.path.exists(os.path.join(d, "Chart.yaml")):
         cmd = ["helm", "template", app["release"], d, "--namespace", app["namespace"]]
         for v in app["values"]:

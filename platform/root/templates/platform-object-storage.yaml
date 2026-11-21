@@ -1,5 +1,5 @@
 {{- $c := include "root.cluster" . | fromJson }}
-{{- if eq $c.objectStorage "in-cluster" }}
+{{- if and (eq $c.objectStorage "in-cluster") (include "root.enabled" (list . "object-storage")) }}
 # objectStorage: in-cluster. S3-compatible object storage (SeaweedFS) for database backups, where no cloud bucket is at
 # hand. Needs the Secret seaweedfs-s3 (key s3.json: SeaweedFS S3 identities) in namespace object-storage, created by
 # bootstrap or by hand (platform/README.md); the server does not start without it.

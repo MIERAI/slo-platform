@@ -1,1 +1,2 @@
 instance: { repo: https://github.com/your-org/slo-instance.git, revision: main }
+experiments: [experiments, "teams/*/experiments"]

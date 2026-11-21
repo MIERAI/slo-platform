@@ -1,6 +1,7 @@
 # Probes from outside the applications' pods (blackbox exporter, pinned chart): the "probe" SLOs of app.yaml
 # (platform/slo renders a Probe per SLO and environment). An in-pod SLI cannot see an outage with no pod left to count
 # it: every pod of a service down once paged nobody.
+{{- if include "root.enabled" (list . "blackbox") }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -14,8 +15,7 @@ spec:
     targetRevision: 11.21.3
     helm:
       valuesObject:
-        fullnameOverride: blackbox-exporter
-        resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 64Mi } }
+        {{- include "root.helmValues" (list . "blackbox" (include "root.blackbox.values" .)) | nindent 8 }}
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
@@ -23,3 +23,8 @@ spec:
     automated: { prune: true, selfHeal: true }
     syncOptions: [CreateNamespace=true, ServerSideApply=true]
     retry: { limit: 5, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
+{{- end }}
+{{- define "root.blackbox.values" }}
+fullnameOverride: blackbox-exporter
+resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 64Mi } }
+{{- end }}

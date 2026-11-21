@@ -1,4 +1,4 @@
-{{- if .Values.optional.policies }}
+{{- if and .Values.optional.policies (include "root.enabled" (list . "kyverno")) }}
 # optional.policies: the Kyverno admission controller (its policies: platform-policies.yaml)
 apiVersion: argoproj.io/v1alpha1
 kind: Application

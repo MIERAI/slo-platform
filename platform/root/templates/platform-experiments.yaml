@@ -4,7 +4,7 @@ metrics (slo_experiment_*), a ticket when it fails or stops running. Lab cluster
 also refuses to start unless every node is labelled slo-platform/lab=true.
 */}}
 {{- $c := include "root.cluster" . | fromJson }}
-{{- if eq $c.role "lab" }}
+{{- if and (eq $c.role "lab") (include "root.enabled" (list . "experiments")) }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -17,10 +17,7 @@ spec:
     path: platform/experiments
     helm:
       valuesObject:
-        schedule: {{ .Values.regression.schedule | quote }}
-        timeZone: {{ .Values.timezone | quote }}
-        product: { repo: {{ .Values.product.repo | quote }}, version: {{ .Values.product.version | toString | quote }} }
-        instance: { repo: {{ .Values.instance.repo | quote }}, revision: {{ .Values.instance.revision | toString | quote }} }
+        {{- include "root.helmValues" (list . "experiments" (include "root.experiments.values" .)) | nindent 8 }}
   destination:
     server: https://kubernetes.default.svc
     namespace: slo-experiments
@@ -28,4 +25,11 @@ spec:
     automated: { prune: true, selfHeal: true }
     syncOptions: [CreateNamespace=true]
     retry: { limit: 5, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
+{{- end }}
+{{- define "root.experiments.values" }}
+schedule: {{ .Values.regression.schedule | quote }}
+timeZone: {{ .Values.timezone | quote }}
+product: { repo: {{ .Values.product.repo | quote }}, version: {{ .Values.product.version | toString | quote }} }
+instance: { repo: {{ .Values.instance.repo | quote }}, revision: {{ .Values.instance.revision | toString | quote }} }
+experiments: {{ include "root.experiments" . }}   # regression.experiments
 {{- end }}

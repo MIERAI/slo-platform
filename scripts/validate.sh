@@ -10,7 +10,9 @@
 #     texts) through amtool check-config, and once through kube-prometheus-stack as the cluster gets it
 #   - an instance assembled from examples/ (scripts/render.py), for every cluster of platform/root/ci/platform.yaml:
 #     every Application the root chart makes from the product or the instance, including those the ApplicationSet
-#     derives from each app.yaml; traffic again through k6. With no examples, only the platform's.
+#     derives from each app.yaml; traffic again through k6. With no examples, only the platform's. Then the same
+#     examples laid out as an existing repository (platform/root/ci/existing-repo.yaml: applications at the root,
+#     experiments in one directory, extras): it must render, pass `slo-platform check`, and its extras kubeconform.
 #   - the optional admission policies: their own tests, then every application must pass them (what Kyverno checks
 #     at admission, but on the pull request)
 # Then scripts/test.sh (unit tests), when present. Portable: macOS bash 3 and Linux.
@@ -105,9 +107,10 @@ echo "  kube-prometheus-stack $kps: the same configuration and texts"
 
 echo "• instance assembled from examples/ (scripts/render.py)"
 : > "$tmp/apps"
-for cl in $(clusters platform/root/ci/platform.yaml); do
-  echo "  cluster $cl"
-  "$PY" -I scripts/render.py --cluster "$cl" all "$tmp/$cl" > "$tmp/list-$cl"
+for pf in platform/root/ci/platform.yaml platform/root/ci/existing-repo.yaml; do
+for cl in $(clusters "$pf"); do
+  echo "  $pf cluster $cl"
+  "$PY" -I scripts/render.py --platform "$pf" --cluster "$cl" all "$tmp/$cl" > "$tmp/list-$cl"
   while read -r a path ns enforced; do
     if grep -q "^$a " "$tmp/apps"; then continue; fi   # the same Application on another cluster: rendered already
     echo "$a $path $ns $enforced" >> "$tmp/apps"
@@ -117,6 +120,17 @@ for cl in $(clusters platform/root/ci/platform.yaml); do
     if [ "$path" = platform/traffic ]; then k6_inspect "$tmp/app-$a.yaml"; fi
   done < "$tmp/list-$cl"
 done
+done
+echo "  slo-platform check of the existing-repository layout"
+"$PY" -I - <<'PY'
+import os, subprocess, sys
+sys.path.insert(0, "scripts")
+import render
+d = render.example_instance(".", "platform/root/ci/existing-repo.yaml")
+r = subprocess.run([sys.executable, "-I", "bin/slo-platform", "check", d], capture_output=True, text=True)
+print("   ", (r.stdout + r.stderr).strip().replace(d + os.sep, ""))
+sys.exit(r.returncode)
+PY
 n=$(grep -c ' enforced$' "$tmp/apps" || true)
 [ "$n" -gt 0 ] || echo "  (no app.yaml: only the platform's Applications)"
 

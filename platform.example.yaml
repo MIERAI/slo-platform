@@ -10,6 +10,7 @@ product:                           # the platform: this repository at a version
 instance:                          # your instance repository: apps/*/app.yaml, their manifests and experiments
   repo: https://github.com/your-org/slo-instance.git
   revision: main
+  # apps: apps                     # where <app>/app.yaml directories live; "." = the repository root (an existing repo)
 
 timezone: Etc/UTC                  # IANA name: the regression's schedule, quiet hours, the synthetic users' day
 language: en                       # en | zh | ja (notification texts)
@@ -23,15 +24,27 @@ clusters:                          # one root Application per cluster; bootstrap
     role: prod                     # notifies; never runs experiments
     runtime: k3s
     objectStorage: in-cluster
+    # extras:                      # your own components: Application extras-<name> from this repository's <path>
+    #   - { name: mine, path: clusters/prod }
 
 optional:
   policies: false                  # Kyverno + the workload baseline (admission policies)
+
+# applications:                    # metadata of every application namespace (app.yaml namespace: adds / overrides)
+#   namespaceLabels: { example.com/policies: enforced }
+#   namespaceAnnotations: {}
+
+# components:                      # per platform component: enabled (default true); Helm-sourced ones also values,
+#   monitoring:                    # deep-merged into its Helm values (maps merge, lists replace)
+#     values: { prometheus: { prometheusSpec: { retentionSize: 12GB } } }
+#   cnpg: { enabled: false }
 
 grafana:
   adminSecret: grafana-admin       # Secret in monitoring with admin-user, admin-password (created by bootstrap)
 
 regression:
   schedule: "0 9 * * *"            # the daily fault regression on lab clusters, in `timezone`
+  # experiments: experiments       # its experiment directories (globs); default <instance.apps>/*/experiments
 
 traffic:
   dayMinutes: 1440                 # the synthetic users' day; less compresses it (60: one day per hour, for tests)

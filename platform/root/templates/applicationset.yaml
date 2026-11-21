@@ -6,6 +6,9 @@ placeholders, not a Helm template.
 {{- .Files.Get "files/applicationset.yaml"
     | replace "${INSTANCE_REPO}" .Values.instance.repo
     | replace "${INSTANCE_REVISION}" (.Values.instance.revision | toString)
+    | replace "${APPS_GLOB}" (include "root.appsGlob" .)
+    | replace "${NAMESPACE_LABELS}" (include "root.goDict" .Values.applications.namespaceLabels)
+    | replace "${NAMESPACE_ANNOTATIONS}" (include "root.goDict" .Values.applications.namespaceAnnotations)
     | replace "${PRODUCT_REPO}" .Values.product.repo
     | replace "${PRODUCT_VERSION}" (.Values.product.version | toString)
     | replace "${DAY_MINUTES}" (.Values.traffic.dayMinutes | toString)
