@@ -35,33 +35,24 @@ outage — until the outage. An alert that has never fired is a hope, not a safe
 ## How it works
 
 ```mermaid
-flowchart LR
-  subgraph repo["your instance repository"]
-    cfg["platform.yaml<br/>(the one config)"]
-    apps["apps/&lt;app&gt;/app.yaml<br/>SLOs · synthetic users"]
-    exp["experiments<br/>predictions, committed first"]
+flowchart TB
+  subgraph git["Git"]
+    direction LR
+    repo["<b>your instance repository</b><br/>platform.yaml · apps/&lt;app&gt;/app.yaml (SLOs)<br/>experiments (predictions, committed first)"]
+    rel(["slo-platform<br/>release vX.Y.Z"])
   end
-  rel(["slo-platform<br/>release vX.Y.Z"])
-
-  subgraph lab["lab cluster"]
-    lgit["Argo CD:<br/>platform + apps"]
-    reg["daily regression<br/>(Chaos Mesh faults)"]
-    lprom["Prometheus + Pyrra<br/>burn-rate alerts"]
+  subgraph lab["lab cluster — faults only here"]
+    direction LR
+    reg["daily regression<br/>(Chaos Mesh)"] -- "inject the fault" --> lapps["your apps<br/>+ the platform"]
+    lapps --> lprom["Prometheus + Pyrra<br/>burn-rate alerts"]
+    lprom -- "predicted alert in time?<br/>nothing else paged?<br/>→ PASS / FAIL" --> reg
   end
-
-  subgraph prod["prod cluster"]
-    pgit["Argo CD:<br/>platform + apps"]
-    pprom["Prometheus + Pyrra<br/>burn-rate alerts"]
-    am["Alertmanager"]
+  subgraph prod["prod cluster — the same platform and apps"]
+    direction LR
+    papps["your apps<br/>+ the platform"] --> pprom["Prometheus + Pyrra<br/>burn-rate alerts"] --> am["Alertmanager"]
   end
-
-  cfg --> lgit & pgit
-  apps --> lgit & pgit
-  rel --> lgit & pgit
-  exp --> reg
-  reg -- "inject the fault" --> lgit
-  lprom -- "did the predicted alert fire in time?<br/>did anything else page?" --> reg
-  pprom --> am
+  git -- "Argo CD syncs" --> lab
+  git -- "Argo CD syncs" --> prod
   am -- "page / ticket" --> people["ntfy · Slack · Telegram<br/>email · webhook …"]
   am -. "Watchdog every minute" .-> dms["dead man's switch"]
 ```
