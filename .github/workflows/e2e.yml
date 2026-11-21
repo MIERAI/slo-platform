@@ -1,5 +1,6 @@
 # The template instantiated end to end on kind (scripts/e2e.sh): init → in-cluster git server → bootstrap/tofu/kind →
-# every Application Synced + Healthy; with the sample-app-down fault experiment on release tags and on request.
+# every Application Synced + Healthy; with the sample-app-down fault experiment on release tags, on request and when
+# the e2e itself changes (pull requests).
 # sample-app only: private repositories run on 2 vCPU / 7 GB runners.
 name: e2e
 on:
@@ -34,7 +35,7 @@ jobs:
       - name: scripts/e2e.sh
         env:
           E2E_DIAG: ${{ runner.temp }}/e2e-diagnostics
-          EXPERIMENT: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.experiment) }}
+          EXPERIMENT: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.experiment) }}
         run: |
           args=(--timeout 40 --results "$RUNNER_TEMP/e2e-results")
           if [ "$EXPERIMENT" = true ]; then args+=(--experiment); fi
