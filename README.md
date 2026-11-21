@@ -30,6 +30,7 @@ outage — until the outage. An alert that has never fired is a hope, not a safe
 | **Alert** | Multi-window, multi-burn-rate alerts (page / ticket), "SLI absent" tickets, sensible routing and inhibition |
 | **Verify** | Fault experiments with predictions committed before the run (which alert fires within how long, what stays quiet), run daily as a regression on a lab cluster; a negative test proves normal traffic pages nobody |
 | **Gate** *(planned)* | Error budget left decides whether a promotion to prod needs a reason, or only fixes may ship — today the budgets are there (Pyrra); the promotion gate itself is not part of the platform yet (the reference installation runs one from its private delivery board) |
+| **Size** | Capacity tests judged on the same SLOs: raise the load until one stops holding — the knee, req/s per pod, what ran out first, how long the autoscaler takes ([docs/capacity.md](docs/capacity.md)) |
 | **Watch the watcher** | External probes from outside the cluster and a dead man's switch for the alerting pipeline itself |
 
 ## How it works
