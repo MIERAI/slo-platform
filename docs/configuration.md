@@ -108,7 +108,7 @@ once per cluster with `cluster: <name>` added. An annotated example: [platform.e
 | `optional.policies` | `false` | Kyverno and the workload baseline (admission policies in application namespaces) |
 | `applications.namespaceLabels` | `{}` | Labels of every application namespace `<app>-<env>` (app.yaml `namespace.labels` is merged over them) |
 | `applications.namespaceAnnotations` | `{}` | Annotations of every application namespace (app.yaml `namespace.annotations` is merged over them) |
-| `components.<component>.enabled` | `true` | `false`: the platform component is not installed ([Components](#components)) |
+| `components.<component>.enabled` | `true` (`tracing`: `false`) | `false`: the platform component is not installed; `true` installs an opt-in one ([Components](#components)) |
 | `components.<component>.values` | — | Helm-sourced components only: deep-merged into its Helm values |
 | `grafana.adminSecret` | `grafana-admin` | Secret in `monitoring` with keys `admin-user`, `admin-password`; bootstrap creates it |
 | `regression.schedule` | `0 9 * * *` | Cron schedule of the daily experiment regression on lab clusters, in `timezone` |
@@ -170,9 +170,10 @@ The platform components the root chart installs, each an Argo CD Application `pl
 | `cnpg` | kustomize | every cluster |
 | `kyverno`, `policies` | kustomize | with `optional.policies: true` |
 | `object-storage` | kustomize | clusters with `objectStorage: in-cluster` |
+| `tracing` | Helm: tempo (grafana-community) | only with `enabled: true` (opt-in): [Tracing](#tracing) |
 
 - `enabled: false` drops the component (its Application; Argo CD prunes what it installed). `enabled: true` is the
-  default and does not override the condition in the last column. What depends on a dropped component is yours to
+  default (except for the opt-in `tracing`) and does not override the condition in the last column. What depends on a dropped component is yours to
   provide: Pyrra and the SLOs need the monitoring stack's CRDs, cnpg and chaos-mesh need cert-manager, the canary
   examples need Argo Rollouts.
 - `values` (Helm-sourced components only) are **deep-merged** into the component's Helm values as the platform sets
@@ -199,6 +200,38 @@ components:
 
 Merging over the monitoring stack's Alertmanager `config` replaces parts of the platform's routing ([notify](#notify)
 builds it): prefer `notify`.
+
+### Tracing
+
+`tracing` (off by default) installs Grafana Tempo as `platform-tracing` in namespace `tracing`: single binary, local
+storage on a 2 Gi volume, 24 h retention, memory request 128 Mi / limit 256 Mi (`GOMEMLIMIT` 200 MiB), no usage
+reports. Grafana (platform-monitoring) gets a Tempo datasource (uid `tempo`) on the same clusters. On, everywhere or on
+one cluster:
+
+```yaml
+components:
+  tracing: { enabled: true }
+# or only on the lab:
+clusters:
+  lab: { role: lab, components: { tracing: { enabled: true } } }
+```
+
+| Endpoint | |
+|---|---|
+| `http://tempo.tracing.svc:4318` | OTLP over HTTP: `OTEL_EXPORTER_OTLP_ENDPOINT` of your services |
+| `tempo.tracing.svc:4317` | OTLP over gRPC |
+| `http://tempo.tracing.svc:3200` | Tempo's API (TraceQL search); Grafana's datasource. `kubectl -n tracing port-forward svc/tempo 3200` |
+
+`values` merge into the chart's values (`grafana-community/tempo`; `tempo.retention`, `tempo.resources`,
+`persistence.size`, …). The datasource is a provisioning file of its own (`grafana.datasources."tempo.yaml"` of
+platform-monitoring), so your own `grafana.additionalDataSources` do not replace it.
+
+The applications decide whether they send traces: the platform passes nothing into them. The storefront example has
+an opt-in kustomize Component (`examples/storefront/tracing`) and a worker chart value for it
+([examples/README.md](../examples/README.md#storefront--the-reference)). Memory: Tempo keeps recent traces in memory
+before it writes blocks; it measured ~110 MiB with storefront's traffic and ~200 MiB after a burst of ~2.8k spans/s.
+For a load test traced at 100 %, sample in the services (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`,
+`OTEL_TRACES_SAMPLER_ARG=0.1`) or raise `tempo.resources.limits.memory` (and `GOMEMLIMIT` in `tempo.extraEnv`).
 
 ## An existing repository
 

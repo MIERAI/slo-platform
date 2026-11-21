@@ -900,6 +900,22 @@
                   }
                 },
                 "description": "SeaweedFS (only on clusters with objectStorage: in-cluster): kustomize-sourced, so no `values`."
+              },
+              "tracing": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "true: installed (off by default)."
+                  },
+                  "values": {
+                    "type": "object",
+                    "description": "Deep-merged into the component's Helm values (maps merge, lists and scalars replace)."
+                  }
+                },
+                "description": "Grafana Tempo (distributed tracing, OTLP receiver, Grafana datasource): Helm-sourced, opt-in (enabled: false by default)."
               }
             }
           }
@@ -961,7 +977,7 @@
       "type": "object",
       "additionalProperties": false,
       "default": {},
-      "description": "Per platform component: enabled (default true) and, for Helm-sourced ones, values merged into its Helm values.",
+      "description": "Per platform component: enabled (default true; false for the opt-in tracing) and, for Helm-sourced ones, values merged into its Helm values.",
       "properties": {
         "monitoring": {
           "type": "object",
@@ -1110,6 +1126,22 @@
             }
           },
           "description": "SeaweedFS (only on clusters with objectStorage: in-cluster): kustomize-sourced, so no `values`."
+        },
+        "tracing": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "true: installed (off by default)."
+            },
+            "values": {
+              "type": "object",
+              "description": "Deep-merged into the component's Helm values (maps merge, lists and scalars replace)."
+            }
+          },
+          "description": "Grafana Tempo (distributed tracing, OTLP receiver, Grafana datasource): Helm-sourced, opt-in (enabled: false by default)."
         }
       }
     },

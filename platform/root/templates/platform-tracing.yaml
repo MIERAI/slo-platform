@@ -1,0 +1,41 @@
+# Distributed tracing (optional, off unless components.tracing.enabled is true): Grafana Tempo in single-binary mode
+# (pinned chart), local storage on a small volume, 24h retention. Applications send OTLP to
+#   http://tempo.tracing.svc:4318 (HTTP)  or  tempo.tracing.svc:4317 (gRPC)
+# e.g. OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo.tracing.svc:4318. Grafana gets a Tempo datasource (uid tempo) from
+# platform-monitoring when this is on. Query API (TraceQL): http://tempo.tracing.svc:3200.
+{{- if include "root.enabled" (list . "tracing") }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-tracing
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://grafana-community.github.io/helm-charts
+    chart: tempo
+    targetRevision: 3.2.1   # Tempo 3.1.1; the chart moved from grafana/helm-charts (tempo 1.x, deprecated) to grafana-community
+    helm:
+      valuesObject:
+        {{- include "root.helmValues" (list . "tracing" (include "root.tracing.values" .)) | nindent 8 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tracing
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+    retry: { limit: 5, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
+{{- end }}
+{{- define "root.tracing.values" }}
+fullnameOverride: tempo   # Service tempo.tracing: the endpoint applications and the Grafana datasource use
+tempo:
+  reportingEnabled: false   # no usage reports to grafana.com
+  retention: 24h            # traces are for "what happened just now"; SLOs and their history live in Prometheus
+  # Measured with Tempo 3.1.1 (local, storefront traffic): ~110 MiB idle with traces, ~200 MiB after a burst of
+  # ~2.8k spans/s, GOMEMLIMIT keeping the Go heap below the limit. A capacity test traced at 100% may need more:
+  # sample (OTEL_TRACES_SAMPLER=parentbased_traceidratio) or raise the limit in components.tracing.values.
+  resources: { requests: { cpu: 20m, memory: 128Mi }, limits: { memory: 256Mi } }
+  extraEnv: [{ name: GOMEMLIMIT, value: 200MiB }]
+# blocks and WAL on a volume: a restart keeps the last day of traces
+persistence: { enabled: true, size: 2Gi }
+{{- end }}

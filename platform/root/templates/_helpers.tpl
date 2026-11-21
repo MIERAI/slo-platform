@@ -22,17 +22,25 @@ repoURL: {{ .Values.product.repo }}
 targetRevision: {{ .Values.product.version | quote }}
 {{- end }}
 
+{{- /* root.optIn: the components that are off unless components.<name>.enabled is true */}}
+{{- define "root.optIn" -}}
+{{- list "tracing" | toJson }}
+{{- end }}
+
 {{- /* root.component: components.<name> of platform.yaml with its defaults, as JSON: {enabled, values};
-clusters.<cluster>.components.<name> deep-merged over it (clusters differ: a small lab drops what prod keeps) */}}
+clusters.<cluster>.components.<name> deep-merged over it (clusters differ: a small lab drops what prod keeps).
+enabled defaults to true, to false for the opt-in components (root.optIn) */}}
 {{- define "root.component" -}}
 {{- $root := index . 0 }}{{ $name := index . 1 }}
 {{- $top := index ($root.Values.components | default dict) $name | default dict }}
 {{- $cl := index ((index ($root.Values.clusters | default dict) ($root.Values.cluster | default "") | default dict).components | default dict) $name | default dict }}
 {{- $c := include "root.deepMerge" (dict "base" $top "over" $cl) | fromJson }}
-{{- dict "enabled" (ne (toString (dig "enabled" true $c)) "false") "values" (dig "values" dict $c) | toJson }}
+{{- $default := not (has $name (include "root.optIn" . | fromJsonArray)) }}
+{{- dict "enabled" (eq (toString (dig "enabled" $default $c)) "true") "values" (dig "values" dict $c) | toJson }}
 {{- end }}
 
-{{- /* root.enabled: "true" unless components.<name>.enabled is false ((list . "<name>"); empty = false) */}}
+{{- /* root.enabled: "true" when components.<name> is enabled ((list . "<name>"); empty = false): unless enabled is
+false, or for an opt-in component (root.optIn) only when it is true */}}
 {{- define "root.enabled" -}}
 {{- if (include "root.component" . | fromJson).enabled }}true{{ end }}
 {{- end }}

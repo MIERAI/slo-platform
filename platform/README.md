@@ -50,6 +50,7 @@ documented there) plus `cluster`; rendering fails when `cluster` is missing or n
 | cnpg | `platform-cnpg` | every cluster | CloudNativePG operator + Barman Cloud plugin (applications with databases) |
 | [experiments](experiments) | `platform-experiments` | `role: lab` | daily fault regression (CronJob at `regression.schedule` in `timezone`), results exporter, tickets |
 | kyverno + [policies](policies) | `platform-kyverno`, `platform-policies` | `optional.policies: true` | admission baseline in every application namespace (label `slo-platform/app`): pinned images, resources, readiness probe, non-root. `scripts/validate.sh` checks every application against it on each pull request, installed or not. |
+| tracing | `platform-tracing` | `components.tracing.enabled: true` (opt-in) | Grafana Tempo (single binary, 24 h, local volume): OTLP at `tempo.tracing.svc:4317/4318`, a Tempo datasource in Grafana ([configuration](../docs/configuration.md#tracing)) |
 | [object-storage](object-storage) | `platform-object-storage` | `objectStorage: in-cluster` | in-cluster S3 (SeaweedFS, bucket `cnpg`) for database backups. Needs the Secret `seaweedfs-s3` (key `s3.json`, [SeaweedFS S3 identities](https://github.com/seaweedfs/seaweedfs/wiki/Amazon-S3-API)) in `object-storage`. |
 
 ## Per cluster, from platform.yaml

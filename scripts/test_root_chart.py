@@ -263,9 +263,14 @@ class RootChart(unittest.TestCase):
                  "chaos-mesh": "platform-chaos-mesh", "cert-manager": "platform-cert-manager",
                  "argo-rollouts": "platform-argo-rollouts", "cnpg": "platform-cnpg", "experiments": "platform-experiments",
                  "kyverno": "platform-kyverno", "policies": "platform-policies", "object-storage": "platform-object-storage"}
+        opt_in = {"tracing": "platform-tracing"}   # off unless enabled: true (test_tracing)
         with open(os.path.join(CHART, "values.schema.json")) as f:
-            self.assertEqual(set(json.load(f)["properties"]["components"]["properties"]), set(names))
+            self.assertEqual(set(json.load(f)["properties"]["components"]["properties"]), set(names) | set(opt_in))
         both = set(ok(BASE, "prod")) | set(ok(BASE, "lab"))
+        for c, app in opt_in.items():
+            self.assertNotIn(app, both, c)
+            self.assertEqual(ok(values(components={c: {"enabled": False}}), "prod"), ok(BASE, "prod"), c)
+            self.assertIn(app, ok(values(components={c: {"enabled": True}}), "prod"), c)
         for c, app in names.items():
             v = values(components={c: {"enabled": False}})
             self.assertIn(app, both, c)
@@ -289,6 +294,46 @@ class RootChart(unittest.TestCase):
         self.assertEqual(gl["additionalDataSources"], [{"name": "x"}])     # the top-level part still applies
         self.assertIn("platform-blackbox", prod)
         self.assertNotIn("platform-blackbox", lab)
+
+    def test_tracing(self):
+        # opt-in: nothing without enabled: true, not even Grafana's datasource
+        base = ok(BASE, "prod")
+        self.assertNotIn("platform-tracing", base)
+        self.assertNotIn("datasources", helm_values(base["platform-monitoring"])["grafana"])
+        on = ok(values(components={"tracing": {"enabled": True}}), "prod")
+        app = on["platform-tracing"]["spec"]
+        self.assertEqual((app["source"]["repoURL"], app["source"]["chart"]),
+                         ("https://grafana-community.github.io/helm-charts", "tempo"))
+        self.assertRegex(app["source"]["targetRevision"], r"^\d+\.\d+\.\d+$")    # pinned
+        self.assertEqual(app["destination"]["namespace"], "tracing")
+        t = helm_values(on["platform-tracing"])
+        self.assertEqual((t["fullnameOverride"], t["tempo"]["retention"]), ("tempo", "24h"))
+        self.assertEqual(t["tempo"]["resources"]["limits"]["memory"], "256Mi")
+        ds = helm_values(on["platform-monitoring"])["grafana"]["datasources"]["tempo.yaml"]["datasources"]
+        self.assertEqual([(d["uid"], d["type"], d["url"]) for d in ds], [("tempo", "tempo", "http://tempo.tracing.svc:3200")])
+        # the rest of the monitoring stack is untouched
+        m, b = helm_values(on["platform-monitoring"]), helm_values(base["platform-monitoring"])
+        m["grafana"].pop("datasources")
+        self.assertEqual(m, b)
+        # your own additionalDataSources (a list: it replaces) leave the Tempo datasource in place; values merge
+        v = values(components={"tracing": {"enabled": True, "values": {"tempo": {"retention": "48h"}}},
+                               "monitoring": {"values": {"grafana": {"additionalDataSources": [{"name": "x"}]}}}})
+        g = helm_values(ok(v, "prod")["platform-monitoring"])["grafana"]
+        self.assertEqual((g["additionalDataSources"], list(g["datasources"])), ([{"name": "x"}], ["tempo.yaml"]))
+        t = helm_values(ok(v, "prod")["platform-tracing"])["tempo"]
+        self.assertEqual((t["retention"], t["reportingEnabled"]), ("48h", False))
+        # per cluster: on in the lab only; on everywhere but off in the lab
+        v = values()
+        v["clusters"] = copy.deepcopy(v["clusters"])
+        v["clusters"]["lab"]["components"] = {"tracing": {"enabled": True}}
+        self.assertNotIn("platform-tracing", ok(v, "prod"))
+        self.assertIn("platform-tracing", ok(v, "lab"))
+        v["components"] = {"tracing": {"enabled": True}}
+        v["clusters"]["lab"]["components"] = {"tracing": {"enabled": False}}
+        self.assertIn("platform-tracing", ok(v, "prod"))
+        lab = ok(v, "lab")
+        self.assertNotIn("platform-tracing", lab)
+        self.assertNotIn("datasources", helm_values(lab["platform-monitoring"])["grafana"])
 
     def test_components_values(self):
         n = {"page": [{"type": "telegram", "chatId": "-1001234567890"}]}

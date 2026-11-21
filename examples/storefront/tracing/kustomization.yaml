@@ -1,0 +1,13 @@
+# Traces of web and api to the platform's Tempo (platform.yaml components.tracing.enabled: true). A kustomize
+# Component, not part of the overlays: kustomize cannot read platform.yaml, so turn it on per environment where Tempo
+# runs, by adding to overlays/<env>/kustomization.yaml
+#   components: [../../tracing]
+# and, for the worker, `tracing: { enabled: true }` to worker/values-<env>.yaml. Without it the services do not trace
+# (no OTEL_EXPORTER_OTLP_ENDPOINT: tracing is a no-op in storefront's internal/obs).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - path: otel.yaml
+    target: { kind: Deployment, name: web }
+  - path: otel.yaml
+    target: { kind: Deployment, name: api }

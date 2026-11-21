@@ -36,6 +36,12 @@ and the comments in [storefront/app.yaml](storefront/app.yaml)). Their images ar
 - **Fault switches**: api reads `/etc/faults` from the optional ConfigMap `storefront-faults`; an experiment creates it
   (e.g. `products-errors: "1"`) and deletes it to end the fault.
 - Requires the CloudNativePG operator (the platform installs it).
+- **Traces** (optional): the services trace through OpenTelemetry when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and are a
+  no-op otherwise. With the platform's `tracing` component on, send them to Tempo per environment: add
+  `components: [../../tracing]` to `overlays/<env>/kustomization.yaml` (web, api) and `tracing: { enabled: true }` to
+  `worker/values-<env>.yaml`. Off by default: kustomize cannot see whether the cluster runs Tempo. Spans: page and
+  order requests (web, api), web → api with `traceparent`, the order INSERT, the worker's `process order` with its
+  queries ([storefront README](https://github.com/MIERAI/storefront#traces-opentelemetry-off-by-default)).
 
 ## Synthetic users
 
