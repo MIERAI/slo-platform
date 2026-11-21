@@ -4,10 +4,10 @@ SLOs you can trust. Declare service level objectives next to your application, g
 and **prove those alerts work**: a fault experiment library runs every day on a lab cluster and checks that each alert
 fires when it should — and that normal traffic pages nobody. Error budgets then gate promotions to production.
 
-> **Status: pre-alpha (P2).** `slo-platform init` creates your instance repository (one `platform.yaml`), and
-> `bootstrap/tofu` installs the platform from a version of this repository into a kind or an existing cluster.
-> Notification receivers (`notify` in platform.yaml, P3) are in; P3 is done when a page from the documented quickstart
-> (P4) reaches ntfy. See [docs/roadmap.md](docs/roadmap.md).
+> **Status: v0.1.0 (alpha).** Install from one `platform.yaml`: `slo-platform init` creates your instance repository,
+> `bootstrap/tofu` installs a released version into kind or an existing cluster, notifications go to ntfy / Slack /
+> Telegram / email and more, and CI instantiates the template end to end with a passing fault experiment. Start with
+> [docs/quickstart.md](docs/quickstart.md); what's next: [docs/roadmap.md](docs/roadmap.md).
 
 ## Quickstart
 

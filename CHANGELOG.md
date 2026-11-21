@@ -4,6 +4,8 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-21
+
 ### Added
 - An existing GitOps repository as an instance (P5), all optional with today's behaviour as the default:
   `instance.apps` (where `<app>/app.yaml` directories live; `.` = the repository root), `regression.experiments`
