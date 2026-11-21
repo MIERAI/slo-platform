@@ -1,0 +1,22 @@
+{{- /*
+The root Application itself (self-managed): bootstrap creates it once with exactly this spec, then Argo CD keeps it as
+rendered here, so changing product.version in platform.yaml retargets the root too (upgrade = one commit).
+*/}}
+{{- $c := include "root.cluster" . | fromJson }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: slo-platform
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: {{ .Values.product.repo }}
+      targetRevision: {{ .Values.product.version | quote }}
+      path: platform/root
+      helm:
+        valueFiles: [$instance/platform.yaml]
+        parameters: [{ name: cluster, value: {{ $c.name | quote }} }]
+    - { repoURL: {{ .Values.instance.repo }}, targetRevision: {{ .Values.instance.revision | quote }}, ref: instance }
+  destination: { server: https://kubernetes.default.svc, namespace: argocd }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }

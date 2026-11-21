@@ -1,0 +1,31 @@
+{{- /*
+The scheduled fault-experiment regression (platform/experiments): every experiment of the instance daily, results as
+metrics (slo_experiment_*), a ticket when it fails or stops running. Lab clusters only (role lab); the runner itself
+also refuses to start unless every node is labelled slo-platform/lab=true.
+*/}}
+{{- $c := include "root.cluster" . | fromJson }}
+{{- if eq $c.role "lab" }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-experiments
+  namespace: argocd
+spec:
+  project: default
+  source:
+    {{- include "root.product" . | nindent 4 }}
+    path: platform/experiments
+    helm:
+      valuesObject:
+        schedule: {{ .Values.regression.schedule | quote }}
+        timeZone: {{ .Values.timezone | quote }}
+        product: { repo: {{ .Values.product.repo | quote }}, version: {{ .Values.product.version | toString | quote }} }
+        instance: { repo: {{ .Values.instance.repo | quote }}, revision: {{ .Values.instance.revision | toString | quote }} }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: slo-experiments
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
+    retry: { limit: 5, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
+{{- end }}

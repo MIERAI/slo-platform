@@ -1,14 +1,15 @@
-# Every application registered by an app.yaml (examples/<app>/app.yaml; reference: docs/app-yaml.md): one Argo CD
-# Application per component × environment, named <component>-<env>, deployed into the namespace <name>-<env>.
-#   component kustomize: <dir>  → path <app dir>/<dir>/<env>
-#   component helm: <dir>       → chart <app dir>/<dir>/chart, values <app dir>/<dir>/values-<env>.yaml
-#   slos                        → component <name>-slo: chart platform/slo, values {app, env, slos} (Pyrra objectives,
-#                                 probes, and the experiment runner's Role / RoleBinding in that namespace)
-#   traffic                     → component <name>-traffic: chart platform/traffic, values {app, env, scale, peakRpm,
-#                                 requests} (synthetic users); not in environments with trafficScale: 0
+# Every application of the instance (apps/<app>/app.yaml in the instance repository; reference: docs/app-yaml.md):
+# one Argo CD Application per component × environment, named <component>-<env>, deployed into the namespace <name>-<env>.
+#   component kustomize: <dir>  → instance repo, path apps/<app>/<dir>/<env>
+#   component helm: <dir>       → instance repo, chart apps/<app>/<dir>/chart, values apps/<app>/<dir>/values-<env>.yaml
+#   slos                        → component <name>-slo: product repo, chart platform/slo, values {app, env, slos} (Pyrra
+#                                 objectives, probes, and the experiment runner's Role / RoleBinding in that namespace)
+#   traffic                     → component <name>-traffic: product repo, chart platform/traffic, values {app, env, scale,
+#                                 peakRpm, requests, day} (synthetic users); not in environments with trafficScale: 0
 # The namespace gets the labels the platform keys on (slo-platform/app, slo-platform/env; slo-platform/image-signatures
 # when signedImages) and the annotation that lets the fault experiments target it (Chaos Mesh only injects into
 # annotated namespaces). ignoreDifferences (app.yaml) is passed through, with RespectIgnoreDifferences.
+# Rendered by the root chart (templates/applicationset.yaml), which fills in the ${…} placeholders from platform.yaml.
 # scripts/render.py (appdesc.applications) renders the same way for validate.sh and the scripts: keep both in step.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -24,9 +25,9 @@ spec:
           - matrix:
               generators:
                 - git:
-                    repoURL: https://github.com/MIERAI/slo-platform.git
-                    revision: main
-                    files: [{ path: "examples/*/app.yaml" }]   # the one place that says where app.yaml files live
+                    repoURL: "${INSTANCE_REPO}"
+                    revision: "${INSTANCE_REVISION}"
+                    files: [{ path: "apps/*/app.yaml" }]   # the one place that says where app.yaml files live
                 # prefixed keys: the app, the component and the environment all have a name
                 - list:
                     elementsYaml: |
@@ -57,9 +58,9 @@ spec:
       labels: { slo-platform/app: "{{ .name }}", slo-platform/env: "{{ .env.name }}" }
     spec:
       project: default
-      source:
-        repoURL: https://github.com/MIERAI/slo-platform.git
-        targetRevision: main
+      source:   # the platform's charts; an application's own components: the instance repository (templatePatch)
+        repoURL: "${PRODUCT_REPO}"
+        targetRevision: "${PRODUCT_VERSION}"
       destination:
         server: https://kubernetes.default.svc
         namespace: "{{ .name }}-{{ .env.name }}"
@@ -76,7 +77,7 @@ spec:
           releaseName: "{{ .component.name }}"
           valuesObject: {{ toJson (dict "app" .name "env" .env.name "slos" .slos) }}
       {{- else if hasKey .component "traffic" }}
-        {{- $v := dict "app" .name "env" .env.name "requests" .traffic.requests }}
+        {{- $v := dict "app" .name "env" .env.name "requests" .traffic.requests "day" (dict "minutes" ${DAY_MINUTES} "tzOffsetHours" ${TZ_OFFSET_HOURS}) }}
         {{- if hasKey .traffic "peakRpm" }}{{ $_ := set $v "peakRpm" .traffic.peakRpm }}{{ end }}
         {{- if hasKey .env "trafficScale" }}{{ $_ := set $v "scale" .env.trafficScale }}{{ end }}
         path: platform/traffic
@@ -84,11 +85,15 @@ spec:
           releaseName: "{{ .component.name }}"
           valuesObject: {{ toJson $v }}
       {{- else if hasKey .component "helm" }}
+        repoURL: "${INSTANCE_REPO}"
+        targetRevision: "${INSTANCE_REVISION}"
         path: "{{ .path.path }}/{{ .component.helm }}/chart"
         helm:
           releaseName: "{{ .component.name }}"
           valueFiles: ["../values-{{ .env.name }}.yaml"]
       {{- else }}
+        repoURL: "${INSTANCE_REPO}"
+        targetRevision: "${INSTANCE_REVISION}"
         path: "{{ .path.path }}/{{ .component.kustomize }}/{{ .env.name }}"
       {{- end }}
       {{- if hasKey . "ignoreDifferences" }}

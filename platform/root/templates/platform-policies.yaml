@@ -1,20 +1,21 @@
-# cert-manager: TLS for the CloudNativePG plugin's gRPC (operator ↔ plugin mTLS)
+{{- if .Values.optional.policies }}
+# optional.policies: admission policies for every application namespace (label slo-platform/app). Retries until Kyverno's CRDs exist.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: platform-cert-manager
+  name: platform-policies
   namespace: argocd
-  annotations: { argocd.argoproj.io/sync-wave: "-3" }
+  annotations: { argocd.argoproj.io/sync-wave: "-2" }
 spec:
   project: default
   source:
-    repoURL: https://github.com/MIERAI/slo-platform.git
-    targetRevision: main
-    path: platform/cert-manager
+    {{- include "root.product" . | nindent 4 }}
+    path: platform/policies
   destination:
     server: https://kubernetes.default.svc
-    namespace: cert-manager
+    namespace: kyverno
   syncPolicy:
     automated: { prune: true, selfHeal: true }
     syncOptions: [CreateNamespace=true, ServerSideApply=true]
     retry: { limit: 10, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
+{{- end }}

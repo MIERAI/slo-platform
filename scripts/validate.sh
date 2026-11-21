@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Everything renders as Argo CD renders it and passes kubeconform (CRDs such as Application / Probe via the CRDs
 # catalog, Pyrra's from our pinned copy):
-#   - the platform's charts (platform/slo, platform/traffic) with their ci/ values: they are tested even with no
-#     application present; synthetic traffic also through `k6 inspect` (the script must build sane scenarios)
-#   - every Application the ApplicationSet derives from an app.yaml (scripts/render.py), traffic again through k6
-#   - the Applications themselves (apps/, apps/optional/) and every platform kustomization
+#   - the platform's charts (platform/slo, platform/traffic, platform/experiments) with their ci/ values: they are
+#     tested even with no application present; synthetic traffic also through `k6 inspect` (the script must build
+#     sane scenarios)
+#   - the root chart (platform/root) with every ci/ platform.yaml, once per cluster in it (helm lint against
+#     values.schema.json, kubeconform); its behaviour per role / runtime / options is unit-tested
+#     (platform/root/test_root.py, in scripts/test.sh)
+#   - an instance assembled from examples/ (scripts/render.py), for every cluster of platform/root/ci/platform.yaml:
+#     every Application the root chart makes from the product or the instance, including those the ApplicationSet
+#     derives from each app.yaml; traffic again through k6. With no examples, only the platform's.
 #   - the optional admission policies: their own tests, then every application must pass them (what Kyverno checks
 #     at admission, but on the pull request)
 # Then scripts/test.sh (unit tests), when present. Portable: macOS bash 3 and Linux.
@@ -41,7 +46,7 @@ print("  k6: %d scenarios, start %s/min, peak %s/min" % (len(sc), u["startRate"]
 }
 
 echo "• platform charts (ci/ values)"
-for c in platform/slo platform/traffic; do
+for c in platform/slo platform/traffic platform/experiments; do
   for v in "$c"/ci/*.yaml; do
     echo "  $v"
     helm lint --quiet --strict "$c" -f "$v" > /dev/null
@@ -51,60 +56,63 @@ for c in platform/slo platform/traffic; do
   done
 done
 
-echo "• applications (app.yaml → ApplicationSet)"
-"$PY" -I scripts/render.py list | awk '$2 !~ /^platform\// || $2 == "platform/slo" || $2 == "platform/traffic" {print $1, $2}' > "$tmp/apps"
-n=0
-while read -r a path; do
-  echo "• $a"
-  "$PY" -I scripts/render.py render "$a" > "$tmp/app-$a.yaml"
-  kc < "$tmp/app-$a.yaml"
-  if [ "$path" = platform/traffic ]; then k6_inspect "$tmp/app-$a.yaml"; fi
-  n=$((n + 1))
-done < "$tmp/apps"
-[ "$n" -gt 0 ] || echo "  (no app.yaml: nothing to render)"
+# clusters <platform.yaml>: the names of its clusters, one per line
+clusters() { "$PY" -I -c 'import sys, yaml; print("\n".join(yaml.safe_load(open(sys.argv[1]))["clusters"]))' "$1"; }
 
-echo "• Applications (apps/, apps/optional/)"
-for d in apps apps/optional; do
-  echo "  $d"; kubectl kustomize "$d" | kc
+echo "• root chart (platform/root, ci/ platform.yaml files × their clusters)"
+for v in platform/root/ci/*.yaml; do
+  for cl in $(clusters "$v"); do
+    echo "  $v cluster=$cl"
+    helm lint --quiet --strict platform/root -f "$v" --set "cluster=$cl" > /dev/null
+    helm template slo-platform platform/root --namespace argocd -f "$v" --set "cluster=$cl" | kc
+  done
 done
 
-echo "• platform components"
-for p in platform/*/; do
-  [ -f "$p/Chart.yaml" ] && continue   # charts: above
-  echo "  $p"; kubectl kustomize "$p" | kc -skip CustomResourceDefinition   # no schema for CRDs themselves
+echo "• instance assembled from examples/ (scripts/render.py)"
+: > "$tmp/apps"
+for cl in $(clusters platform/root/ci/platform.yaml); do
+  echo "  cluster $cl"
+  "$PY" -I scripts/render.py --cluster "$cl" all "$tmp/$cl" > "$tmp/list-$cl"
+  while read -r a path ns enforced; do
+    if grep -q "^$a " "$tmp/apps"; then continue; fi   # the same Application on another cluster: rendered already
+    echo "$a $path $ns $enforced" >> "$tmp/apps"
+    cp "$tmp/$cl/$a.yaml" "$tmp/app-$a.yaml"
+    echo "• $a"
+    kc -skip CustomResourceDefinition < "$tmp/app-$a.yaml"   # no schema for CRDs themselves (platform components)
+    if [ "$path" = platform/traffic ]; then k6_inspect "$tmp/app-$a.yaml"; fi
+  done < "$tmp/list-$cl"
 done
+n=$(grep -c ' enforced$' "$tmp/apps" || true)
+[ "$n" -gt 0 ] || echo "  (no app.yaml: only the platform's Applications)"
 
 echo "• admission policies (optional platform/policies)"
 $KY test platform/policies/tests
 if [ "$n" -gt 0 ]; then
-  # every application namespace carries slo-platform/app, so every rendered application must pass
-  "$PY" -I - > "$tmp/values.yaml" <<'PY'
-import sys
-sys.path.insert(0, "scripts")
-import render
-print("apiVersion: cli.kyverno.io/v1alpha1\nkind: Values\nnamespaceSelector:")
-for ns in sorted({a["namespace"] for a in render.apps() if a["enforced"]}):
-    print(f"  - {{ name: {ns}, labels: {{ slo-platform/app: {ns.rsplit('-', 1)[0]} }} }}")
-PY
-  # Argo CD puts what has no namespace into the destination namespace: so must we, or no selector matches
-  "$PY" -I - "$tmp" <<'PY'
+  # every application namespace carries slo-platform/app, so every rendered application must pass. Argo CD puts what
+  # has no namespace into the destination namespace: so must we, or no selector matches.
+  "$PY" -I - "$tmp" > "$tmp/values.yaml" <<'PY'
 import os, sys, yaml
-sys.path.insert(0, "scripts")
-import render
+tmp = sys.argv[1]
 CLUSTER = {"Namespace", "ClusterRole", "ClusterRoleBinding", "CustomResourceDefinition", "PersistentVolume", "StorageClass",
            "PriorityClass", "IngressClass", "ValidatingWebhookConfiguration", "MutatingWebhookConfiguration"}
-for a in render.apps():
-    f = os.path.join(sys.argv[1], f"app-{a['name']}.yaml")
-    if not os.path.exists(f):
-        continue
-    docs = [d for d in yaml.safe_load_all(open(f)) if d]
+apps = [l.split() for l in open(os.path.join(tmp, "apps")) if l.strip()]
+apps = [(a, ns) for a, _, ns, enforced in apps if enforced == "enforced"]
+print("apiVersion: cli.kyverno.io/v1alpha1\nkind: Values\nnamespaceSelector:")
+for ns in sorted({ns for _, ns in apps}):
+    print(f"  - {{ name: {ns}, labels: {{ slo-platform/app: {ns.rsplit('-', 1)[0]} }} }}")
+for a, ns in apps:
+    with open(os.path.join(tmp, f"app-{a}.yaml")) as f:
+        docs = [d for d in yaml.safe_load_all(f) if d]
     for d in docs:
         if d["kind"] not in CLUSTER:
-            d["metadata"].setdefault("namespace", a["namespace"])
-    yaml.safe_dump_all(docs, open(os.path.join(sys.argv[1], f"ns-{a['name']}.yaml"), "w"))
+            d["metadata"].setdefault("namespace", ns)
+    with open(os.path.join(tmp, f"ns-{a}.yaml"), "w") as f:
+        yaml.safe_dump_all(docs, f)
 PY
   args=()
-  while read -r a _; do args+=(--resource "$tmp/ns-$a.yaml"); done < "$tmp/apps"
+  while read -r a _ _ enforced; do
+    if [ "$enforced" = enforced ]; then args+=(--resource "$tmp/ns-$a.yaml"); fi
+  done < "$tmp/apps"
   out=$($KY apply platform/policies/workload-baseline.yaml --values-file "$tmp/values.yaml" "${args[@]}" 2>&1) || true
   echo "$out" | grep -vE '^\s*$'
   echo "$out" | grep -qE 'fail: 0, warn: 0, error: 0' || { echo "✗ policy violations (see above)"; exit 1; }

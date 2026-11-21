@@ -1,0 +1,7 @@
+# The root chart: everything the platform installs into one cluster, from the instance's platform.yaml (its values)
+# and the cluster's name (the root Application's Helm parameter `cluster`). platform/README.md describes the result.
+apiVersion: v2
+name: slo-platform
+description: The slo-platform root (app of apps) for one cluster of an instance
+type: application
+version: 0.1.0

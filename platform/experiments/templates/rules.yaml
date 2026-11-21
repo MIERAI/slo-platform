@@ -13,7 +13,7 @@ spec:
           for: 5m
           labels: { severity: ticket }
           annotations:
-            summary: "experiment {{ $labels.experiment }} ({{ $labels.namespace }}) failed its last run"
+            summary: "experiment {{ `{{ $labels.experiment }}` }} ({{ `{{ $labels.namespace }}` }}) failed its last run"
             runbook: https://github.com/MIERAI/slo-platform/blob/main/docs/runbook.md#experiment-regression
         - alert: SLOExperimentRegressionStale
           # no scheduled regression finished for 2 days: the job did not run (lab asleep, CronJob broken), crashed,
@@ -32,5 +32,5 @@ spec:
           expr: max by (namespace, job_name) (kube_job_status_failed{namespace="slo-experiments"}) > 0
           labels: { severity: ticket }
           annotations:
-            summary: "experiment regression job {{ $labels.job_name }} failed"
+            summary: "experiment regression job {{ `{{ $labels.job_name }}` }} failed"
             runbook: https://github.com/MIERAI/slo-platform/blob/main/docs/runbook.md#experiment-regression

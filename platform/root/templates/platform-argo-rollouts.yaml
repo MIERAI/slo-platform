@@ -7,8 +7,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/MIERAI/slo-platform.git
-    targetRevision: main
+    {{- include "root.product" . | nindent 4 }}
     path: platform/argo-rollouts
   destination:
     server: https://kubernetes.default.svc

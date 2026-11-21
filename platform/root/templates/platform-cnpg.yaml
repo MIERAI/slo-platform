@@ -1,19 +1,18 @@
-# Optional. Kyverno admission controller (policies: apps/optional/platform-policies.yaml)
+# CloudNativePG operator + Barman Cloud plugin (WAL archiving / backups to S3). Retries until cert-manager's webhook is up.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: platform-kyverno
+  name: platform-cnpg
   namespace: argocd
-  annotations: { argocd.argoproj.io/sync-wave: "-3" }
+  annotations: { argocd.argoproj.io/sync-wave: "-2" }
 spec:
   project: default
   source:
-    repoURL: https://github.com/MIERAI/slo-platform.git
-    targetRevision: main
-    path: platform/kyverno
+    {{- include "root.product" . | nindent 4 }}
+    path: platform/cnpg
   destination:
     server: https://kubernetes.default.svc
-    namespace: kyverno
+    namespace: cnpg-system
   syncPolicy:
     automated: { prune: true, selfHeal: true }
     syncOptions: [CreateNamespace=true, ServerSideApply=true]

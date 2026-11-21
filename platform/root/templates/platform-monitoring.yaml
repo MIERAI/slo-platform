@@ -1,3 +1,4 @@
+{{- $c := include "root.cluster" . | fromJson }}
 # Prometheus + Alertmanager + Grafana (kube-prometheus-stack, pinned chart). fullnameOverride kps: other components
 # address kps-prometheus / kps-alertmanager by name (Pyrra's API, the experiment runner).
 # Apps bring their own PodMonitor / PrometheusRule / dashboard ConfigMap; this only runs the stack.
@@ -67,7 +68,16 @@ spec:
             resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 128Mi } }
           # The default routing policy (docs/concepts.md). Receivers are a slot: "default" is a no-op placeholder
           # until notifications are configured (P3: ntfy, Slack, webhook, email from platform.yaml).
+          # A lab cluster (role lab) notifies nobody: its alerts are the experiments' subject, seen in Alertmanager.
           config:
+            {{- if eq $c.role "lab" }}
+            route:
+              receiver: "null"
+              group_by: [alertname, namespace]
+              group_wait: 30s
+              group_interval: 5m
+              repeat_interval: 12h
+            {{- else }}
             route:
               receiver: "null"
               group_by: [alertname, namespace]   # per service, not per SLO: a database outage burns 4 SLOs, one notification
@@ -85,6 +95,7 @@ spec:
                 # info) are causes, not symptoms: dashboards only (several false-positive on k3s, where the control
                 # plane runs inside one process).
                 - { receiver: default, matchers: ['severity=~"page|ticket"'] }
+            {{- end }}
             # one incident, one notification: while an SLO's fast burn (1h window) pages, its medium burn (6h) page
             # and its tickets stay quiet
             inhibit_rules:
@@ -96,13 +107,15 @@ spec:
                 equal: [namespace, slo]
             receivers:
               - name: "null"
+              {{- if ne $c.role "lab" }}
               - name: default
+              {{- end }}
         grafana:
-          # A fixed, well-known admin password (kube-prometheus-stack's long-standing default): the chart's random one
-          # changes on every render (Argo CD renders without lookup), and its checksum restarts Grafana in a loop.
-          # Grafana is a ClusterIP Service (kubectl port-forward). Before exposing it anywhere: create a Secret and
-          # set admin.existingSecret (platform/README.md).
-          adminPassword: prom-operator
+          # The admin credentials come from a Secret (platform.yaml grafana.adminSecret, keys admin-user and
+          # admin-password; bootstrap creates it): no password in git, and none the chart would re-roll on every render
+          # (Argo CD renders without lookup; the checksum would restart Grafana in a loop). Grafana is a ClusterIP
+          # Service: kubectl -n monitoring port-forward svc/kps-grafana 3000:80.
+          admin: { existingSecret: {{ .Values.grafana.adminSecret | quote }}, userKey: admin-user, passwordKey: admin-password }
           sidecar:
             dashboards: { enabled: true, label: grafana_dashboard, searchNamespace: ALL }
           resources: { requests: { cpu: 50m, memory: 192Mi }, limits: { memory: 512Mi } }

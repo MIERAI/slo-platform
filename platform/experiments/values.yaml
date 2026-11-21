@@ -1,0 +1,12 @@
+# Set by the root chart (platform/root, platform-experiments) from platform.yaml.
+schedule: "0 9 * * *"       # regression.schedule
+timeZone: Etc/UTC           # timezone (IANA)
+product:                    # the scripts: scripts/experiment-regression.py at this ref
+  repo: https://github.com/MIERAI/slo-platform.git
+  version: main
+instance:                   # the experiments: apps/*/experiments at this ref (required)
+  repo: ""
+  revision: main
+# Private repositories: the optional Secret slo-experiments/git-credentials (key token, sent as x-access-token;
+# created by bootstrap when a git token is given) authenticates both clones.
+gitCredentialsSecret: git-credentials

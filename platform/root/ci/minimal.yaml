@@ -1,0 +1,6 @@
+# The smallest platform.yaml: everything else from the defaults (values.yaml / values.schema.json).
+apiVersion: slo-platform/v1
+product: { repo: https://github.com/MIERAI/slo-platform.git, version: v0.1.0 }
+instance: { repo: https://github.com/your-org/slo-instance.git, revision: main }
+clusters:
+  lab: { role: lab }
