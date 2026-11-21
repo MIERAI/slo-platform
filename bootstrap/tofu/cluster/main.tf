@@ -47,14 +47,14 @@ check "lab_nodes_labelled" {
     condition = module.platform.role != "lab" || alltrue([
       for n in data.kubernetes_nodes.all.nodes : try(n.metadata[0].labels["slo-platform/lab"], "") == "true"
     ])
-    error_message = "Role lab, but not every node is labelled: kubectl --context ${var.context} label nodes --all slo-platform/lab=true"
+    error_message = "Role lab, but not every node is labelled: kubectl --kubeconfig ${pathexpand(var.kubeconfig)} --context ${var.context} label nodes --all slo-platform/lab=true"
   }
 }
 
 output "next" {
   value = <<-EOT
-    kubectl --context ${var.context} -n argocd get applications     # slo-platform first, then the platform's Applications
-    kubectl --context ${var.context} ${trimprefix(module.platform.argocd_ui, "kubectl ")}
+    kubectl --kubeconfig ${pathexpand(var.kubeconfig)} --context ${var.context} -n argocd get applications     # slo-platform first, then the platform's Applications
+    kubectl --kubeconfig ${pathexpand(var.kubeconfig)} --context ${var.context} ${trimprefix(module.platform.argocd_ui, "kubectl ")}
       password: ${module.platform.argocd_admin_password_file}
     Grafana password: ${module.platform.grafana_admin_password_file}
   EOT

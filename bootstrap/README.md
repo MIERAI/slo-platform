@@ -69,7 +69,22 @@ tofu -chdir=bootstrap/tofu/cluster apply
 ```
 
 `runtime:` in platform.yaml must match the cluster (`k3s` or `generic`): Chaos Mesh uses it to find the container
-runtime's socket.
+runtime's socket. For a k3s cluster create the instance with `--cluster <name>:<role>:k3s` (or change `runtime:` in
+platform.yaml, then commit and push).
+
+**Keep the cluster's kubeconfig in its own file** (company or other clusters live in `~/.kube/config`), and pass
+it with `TF_VAR_kubeconfig`. A throwaway local k3s with [k3d](https://k3d.io) (`brew install k3d`):
+
+```sh
+mkdir -p $TF_VAR_instance_dir/.secrets/lab
+export KUBECONFIG=$TF_VAR_instance_dir/.secrets/lab/kubeconfig           # k3d reads and writes only this file
+k3d cluster create slo-lab --kubeconfig-update-default=false --agents 0
+k3d kubeconfig get slo-lab > $KUBECONFIG
+export TF_VAR_kubeconfig=$KUBECONFIG TF_VAR_context=k3d-slo-lab TF_VAR_cluster=lab
+kubectl label nodes --all slo-platform/lab=true                        # role lab: see below
+tofu -chdir=bootstrap/tofu/cluster init && tofu -chdir=bootstrap/tofu/cluster apply
+# later: KUBECONFIG=… k3d cluster delete slo-lab   — with KUBECONFIG set: k3d's delete otherwise rewrites ~/.kube/config
+```
 
 ### Labelling lab nodes
 
@@ -136,5 +151,14 @@ tofu -chdir=bootstrap/tofu/kind destroy        # deletes the kind cluster; state
 
 On an existing cluster, `tofu -chdir=bootstrap/tofu/cluster destroy` removes Argo CD, the root Application, the
 repository credentials, the Secrets and the namespaces bootstrap created (`monitoring` among them, with everything in
-it). Applications the root Application rendered are not cascaded: delete them in Argo CD first if the platform's
-workloads should go too.
+it). Applications the root Application rendered are not cascaded (nothing is deleted behind your back). To remove the
+platform's workloads too, before `destroy`:
+
+```sh
+kubectl -n argocd patch application slo-platform --type json -p '[{"op":"remove","path":"/spec/syncPolicy/automated"}]'
+kubectl -n argocd get applications -o name | grep -v /slo-platform | xargs -n1 kubectl -n argocd patch --type merge \
+  -p '{"metadata":{"finalizers":["resources-finalizer.argocd.argoproj.io"]}}'
+kubectl -n argocd delete applications --all --wait        # each Application now deletes what it deployed
+```
+
+A throwaway cluster is simpler: delete the cluster itself.

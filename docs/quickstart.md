@@ -17,7 +17,7 @@ The same path runs in CI on every release (`scripts/e2e.sh`, see [End-to-end tes
 | [OpenTofu](https://opentofu.org/docs/intro/install/) | ≥ 1.10 (tested: 1.13) | creates the kind cluster itself: no `kind` CLI needed |
 | kubectl | within one minor version of the cluster (Kubernetes 1.36) | |
 | git | any recent | |
-| Python | ≥ 3.9 with PyYAML | `pip install pyyaml`, or `apt install python3-yaml` |
+| Python | ≥ 3.9 with PyYAML | Linux: `apt install python3-yaml`. macOS (Homebrew's Python refuses `pip install` system-wide, PEP 668): a virtualenv — `python3 -m venv ~/.venvs/slo && ~/.venvs/slo/bin/pip install pyyaml`, then run the tools with `~/.venvs/slo/bin/python bin/slo-platform …` — or with [uv](https://docs.astral.sh/uv/): `uv run --with pyyaml bin/slo-platform …` |
 | [gh](https://cli.github.com) | optional | creating the repository and a token in one command each |
 
 A GitHub account for the instance repository. While the product repository is private, Argo CD needs a token that
@@ -50,7 +50,7 @@ Push it to GitHub: Argo CD reads your configuration from there, not from your di
 ```sh
 cd ../my-slo
 git init -b main && git add -A && git commit -m "slo-platform instance"
-gh repo create <you>/my-slo --private --source . --push     # or create it on github.com, then:
+gh repo create <you>/my-slo --private --source . --push     # (gh set to git_protocol ssh needs a working SSH key) or create it on github.com, then:
 # git remote add origin https://github.com/<you>/my-slo.git && git push -u origin main
 cd ../slo-platform
 ```
@@ -108,7 +108,7 @@ The UIs, each in its own terminal (user `admin`; passwords in `$TF_VAR_instance_
 
 ```sh
 kubectl -n argocd port-forward svc/argocd-server 8080:80          # http://localhost:8080  (argocd-admin.password)
-kubectl -n monitoring port-forward svc/kps-grafana 3000:80        # http://localhost:3000  (grafana-admin.password)
+kubectl -n monitoring port-forward svc/platform-monitoring-grafana 3000:80        # http://localhost:3000  (grafana-admin.password)
 kubectl -n monitoring port-forward svc/pyrra-api 9099:9099        # http://localhost:9099  the SLOs and their budgets
 ```
 
@@ -145,7 +145,9 @@ Alertmanager notifies nobody, the experiment is the consumer.
 ### Reading the result
 
 The report is `apps/sample-app/experiments/results/<date>-sample-app-down.md` in your instance (or `--results DIR`):
-the hypothesis, the kubectl context it ran against, and the log above.
+the hypothesis, the kubectl context it ran against, and the log above. Commit it
+(`git add apps/*/experiments/results && git commit -m "experiment results" && git push`): results are the record of
+which alerts have been seen working, and the scorecard reads them.
 
 | Verdict | Means | Then |
 |---|---|---|
