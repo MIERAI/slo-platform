@@ -1,4 +1,5 @@
 {{- $c := include "root.cluster" . | fromJson }}
+{{- $am := include "root.alertmanager" . | fromJson }}
 # Prometheus + Alertmanager + Grafana (kube-prometheus-stack, pinned chart). fullnameOverride kps: other components
 # address kps-prometheus / kps-alertmanager by name (Pyrra's API, the experiment runner).
 # Apps bring their own PodMonitor / PrometheusRule / dashboard ConfigMap; this only runs the stack.
@@ -13,7 +14,7 @@ spec:
   source:
     repoURL: https://prometheus-community.github.io/helm-charts
     chart: kube-prometheus-stack
-    targetRevision: 92.17.0
+    targetRevision: 92.17.0   # Alertmanager v0.34.2: amtool (scripts/install-tools.sh) and scripts/notify-delivery.sh follow it
     helm:
       valuesObject:
         fullnameOverride: kps
@@ -66,50 +67,20 @@ spec:
         alertmanager:
           alertmanagerSpec:
             resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 128Mi } }
-          # The default routing policy (docs/concepts.md). Receivers are a slot: "default" is a no-op placeholder
-          # until notifications are configured (P3: ntfy, Slack, webhook, email from platform.yaml).
+            {{- if $am.secret }}
+            # the receivers' secrets (bootstrap: the secrets file's notify:), as files under
+            # /etc/alertmanager/secrets/alertmanager-notify/
+            secrets: [alertmanager-notify]
+            {{- end }}
+          # The default routing policy (docs/concepts.md) and the receivers of platform.yaml `notify` (templates/_notify.tpl).
           # A lab cluster (role lab) notifies nobody: its alerts are the experiments' subject, seen in Alertmanager.
           config:
-            {{- if eq $c.role "lab" }}
-            route:
-              receiver: "null"
-              group_by: [alertname, namespace]
-              group_wait: 30s
-              group_interval: 5m
-              repeat_interval: 12h
-            {{- else }}
-            route:
-              receiver: "null"
-              group_by: [alertname, namespace]   # per service, not per SLO: a database outage burns 4 SLOs, one notification
-              group_wait: 30s
-              group_interval: 5m
-              repeat_interval: 12h
-              routes:
-                # always firing by design (the dead man's switch, P3 sends it to a watcher outside the cluster)
-                - { receiver: "null", matchers: ['alertname=~"Watchdog|InfoInhibitor"'] }
-                # only prod notifies: dev / staging alerts stay visible in Alertmanager and Grafana. Their low traffic
-                # and the fault experiments run there made every short fault page twice (fast burn, then the 6h
-                # window after recovery).
-                - { receiver: "null", matchers: ['namespace=~".+-(dev|staging)"'] }
-                # SLO alerts (page / ticket, platform/slo) notify. The chart's default rules (critical / warning /
-                # info) are causes, not symptoms: dashboards only (several false-positive on k3s, where the control
-                # plane runs inside one process).
-                - { receiver: default, matchers: ['severity=~"page|ticket"'] }
-            {{- end }}
-            # one incident, one notification: while an SLO's fast burn (1h window) pages, its medium burn (6h) page
-            # and its tickets stay quiet
-            inhibit_rules:
-              - source_matchers: ['alertname="ErrorBudgetBurn"', 'severity="page"', 'long="1h"']
-                target_matchers: ['alertname="ErrorBudgetBurn"', 'severity="page"', 'long="6h"']
-                equal: [namespace, slo]
-              - source_matchers: ['alertname="ErrorBudgetBurn"', 'severity="page"']
-                target_matchers: ['alertname="ErrorBudgetBurn"', 'severity="ticket"']
-                equal: [namespace, slo]
-            receivers:
-              - name: "null"
-              {{- if ne $c.role "lab" }}
-              - name: default
-              {{- end }}
+            {{- toYaml $am.config | nindent 12 }}
+          {{- if $am.templates }}
+          # the notification texts (files/notify/: common.tmpl + the language's words)
+          templateFiles:
+            slo-platform.tmpl: {{ $am.templates | toYaml | indent 12 | trim }}
+          {{- end }}
         grafana:
           # The admin credentials come from a Secret (platform.yaml grafana.adminSecret, keys admin-user and
           # admin-password; bootstrap creates it): no password in git, and none the chart would re-roll on every render

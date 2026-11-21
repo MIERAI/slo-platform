@@ -71,7 +71,12 @@ SCHEMA = {
             "schedule": {"type": "string", "pattern": r"^\S+( \S+){4}$"}}},
         "traffic": {"type": "object", "additionalProperties": False, "properties": {
             "dayMinutes": {"type": "integer", "minimum": 1, "maximum": 1440}}},
-        "notify": {"type": "object"},
+        "notify": {"type": "object", "additionalProperties": False, "properties": {   # values.schema.json has each type's fields
+            "page": {"type": "array", "items": {"type": "object", "required": ["type"], "properties": {
+                "type": {"enum": ["slack", "telegram", "discord", "email", "webhook", "pushover", "ntfy", "msteams", "mattermost"]}}}},
+            "ticket": {"$ref": "#/properties/notify/properties/page"},
+            "deadman": {"type": "object", "minProperties": 1},
+            "language": {"enum": ["en", "zh", "ja"]}}},
         "cluster": {"type": "string"},     # the root Application's Helm parameter; not written in platform.yaml
     },
 }
@@ -421,6 +426,70 @@ def check_experiment(x, path, apps, problems, seen):
                     bad(f"expect.{kind}[{i}]: slo {slo} is not declared for environment {a_env}")
 
 
+# notify: the secret keys each receiver type reads (platform/root/templates/_notify.tpl): [(field, default key)] —
+# the key is the receiver's `field` when set, else the default; None: needed only when the condition holds
+NOTIFY_SECRETS = {
+    "slack": [("secretKey", "slackWebhookUrl")],
+    "telegram": [("secretKey", "telegramBotToken")],
+    "discord": [("secretKey", "discordWebhookUrl")],
+    "email": [("secretKey", "smtpPassword", lambda r: "username" in r)],
+    "webhook": [("secretKey", "webhookUrl", lambda r: "url" not in r)],
+    "pushover": [("secretKey", "pushoverToken"), ("userSecretKey", "pushoverUserKey")],
+    "ntfy": [("secretKey", None)],
+    "msteams": [("secretKey", "msteamsWebhookUrl")],
+    "mattermost": [("secretKey", "mattermostWebhookUrl")],
+}
+
+
+def notify_secret_keys(notify):
+    """{key of the secrets file's notify: → where it is used} for platform.yaml's notify (prod clusters)."""
+    keys = {}
+    if not isinstance(notify, dict):
+        return keys
+    for sev in ("page", "ticket"):
+        for i, r in enumerate(notify.get(sev) or []):
+            if not isinstance(r, dict):
+                continue
+            for field, default, *cond in NOTIFY_SECRETS.get(r.get("type"), []):
+                key = r.get(field, default)
+                if key and (not cond or cond[0](r)):
+                    keys.setdefault(str(key), f"notify.{sev}[{i}] ({r.get('type')})")
+    d = notify.get("deadman")
+    if isinstance(d, dict) and d and "url" not in d:
+        keys.setdefault(str(d.get("secretKey", "deadmanUrl")), "notify.deadman")
+    return keys
+
+
+def notify_warnings(instance):
+    """Receivers whose secret is missing from secrets/<cluster>.sops.yaml (prod clusters): Alertmanager would start and
+    that receiver fail at its first notification. SOPS encrypts only the values: the key names are readable without the
+    age key. Never fatal: the file may be kept elsewhere (bootstrap's secrets_file)."""
+    try:
+        with open(os.path.join(instance, "platform.yaml")) as f:
+            p = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    keys = notify_secret_keys(p.get("notify"))
+    out = []
+    for name, c in (p.get("clusters") or {}).items():
+        if not keys or not isinstance(c, dict) or c.get("role") != "prod":
+            continue
+        rel = os.path.join("secrets", f"{name}.sops.yaml")
+        try:
+            with open(os.path.join(instance, rel)) as f:
+                have = ((yaml.safe_load(f) or {}).get("notify") or {})
+        except OSError:
+            out.append(f"{rel}: missing; cluster {name}'s receivers need notify keys "
+                       f"{', '.join(sorted(keys))} (bootstrap creates an empty Secret: those receivers fail)")
+            continue
+        except (yaml.YAMLError, AttributeError) as e:
+            out.append(f"{rel}: not readable ({e}); cannot check the notify keys")
+            continue
+        for k in sorted(set(keys) - set(have if isinstance(have, dict) else {})):
+            out.append(f"{rel}: notify.{k} missing (used by {keys[k]})")
+    return out
+
+
 def check(instance):
     """Every problem of the instance repository at `instance` (empty list: clean)."""
     problems = []
@@ -491,7 +560,8 @@ regression:
   schedule: "0 9 * * *"            # the daily fault regression on lab clusters (in the time zone above)
 traffic:
   dayMinutes: 1440                 # the synthetic users' day; less compresses it (60: one day per hour)
-notify: {{}}                         # who hears what (later); accepted and ignored for now
+notify: {{}}                         # who hears what on prod clusters (receivers per severity, dead man's switch):
+                                   # docs/configuration.md#notify; secrets go into secrets/<cluster>.sops.yaml
 """
 
 
@@ -511,6 +581,17 @@ SECRETS_SKELETON = """# Secrets for cluster {cluster}. Every key is optional: bo
 #   token: ghp_...           # Argo CD's read access to private product / instance repositories (and the regression's)
 # grafana:
 #   adminPassword: ...       # Grafana's admin password; random when absent
+# notify:                    # the notification receivers' secrets (platform.yaml notify; prod clusters)
+#   telegramBotToken: ...    # telegram
+#   slackWebhookUrl: ...     # slack
+#   discordWebhookUrl: ...   # discord
+#   smtpPassword: ...        # email with a username
+#   webhookUrl: ...          # webhook without url
+#   pushoverToken: ...       # pushover (application token)
+#   pushoverUserKey: ...     # pushover (user / group key)
+#   msteamsWebhookUrl: ...   # msteams
+#   mattermostWebhookUrl: ...  # mattermost
+#   deadmanUrl: ...          # deadman without url (e.g. https://hc-ping.com/<uuid>)
 secrets: {{}}                  # for applications: <namespace>: {{ <secret-name>: {{ <key>: <value> }} }}
 """
 
@@ -740,8 +821,12 @@ def main(argv=None):
             problems = check(a.dir)
             if problems:
                 print("\n".join(f"✗ {p}" for p in problems), file=sys.stderr)
+                for w in notify_warnings(a.dir):
+                    print(f"! {w}", file=sys.stderr)
                 print(f"{len(problems)} problem(s)", file=sys.stderr)
                 return 1
+            for w in notify_warnings(a.dir):
+                print(f"! {w}", file=sys.stderr)
             n = len(glob.glob(os.path.join(a.dir, "apps", "*", "app.yaml")))
             x = len(glob.glob(os.path.join(a.dir, "apps", "*", "experiments", "*.yaml")))
             print(f"✓ platform.yaml, {n} application(s), {x} experiment(s)")

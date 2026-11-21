@@ -672,7 +672,7 @@
         "ja"
       ],
       "default": "en",
-      "description": "Language of notification texts (P3)."
+      "description": "Language of notification texts (notify.language overrides it)."
     },
     "clusters": {
       "type": "object",
@@ -781,12 +781,465 @@
     },
     "notify": {
       "type": "object",
+      "additionalProperties": false,
       "default": {},
-      "description": "Notification receivers (P3): accepted and ignored for now."
+      "description": "Who hears what on prod clusters (lab clusters notify nobody). Secrets come from the secrets file's notify: (docs/configuration.md#notify).",
+      "properties": {
+        "page": {
+          "$ref": "#/definitions/receivers"
+        },
+        "ticket": {
+          "$ref": "#/definitions/receivers"
+        },
+        "deadman": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "description": "Dead man's switch: Alertmanager's always-firing Watchdog POSTed to an outside watcher (e.g. healthchecks.io) every interval; it alarms when the pings stop.",
+          "properties": {
+            "url": {
+              "type": "string",
+              "pattern": "^https?://\\S+$",
+              "description": "The ping URL when it holds no secret; else leave it out (secret deadmanUrl)."
+            },
+            "secretKey": {
+              "type": "string",
+              "pattern": "^[-._a-zA-Z0-9]+$",
+              "description": "Secret key of the ping URL (default deadmanUrl)."
+            },
+            "interval": {
+              "type": "string",
+              "pattern": "^([0-9]+(ms|s|m|h|d|w|y))+$",
+              "default": "1m",
+              "description": "How often Watchdog is sent (group_interval and repeat_interval of its route)."
+            }
+          },
+          "not": {
+            "required": [
+              "url",
+              "secretKey"
+            ]
+          }
+        },
+        "language": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh",
+            "ja"
+          ],
+          "description": "Overrides the top-level language for notification texts."
+        }
+      }
     },
     "cluster": {
       "type": "string",
       "description": "Root chart only (the root Application's Helm parameter): which entry of clusters this rendering is for."
+    }
+  },
+  "definitions": {
+    "receiver-slack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "description": "Slack incoming webhook. Secret: slackWebhookUrl (the webhook URL).",
+      "properties": {
+        "type": {
+          "const": "slack"
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Overrides the webhook's channel."
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of the webhook URL (default slackWebhookUrl)."
+        }
+      }
+    },
+    "receiver-telegram": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "chatId"
+      ],
+      "description": "Telegram bot message. Secret: telegramBotToken.",
+      "properties": {
+        "type": {
+          "const": "telegram"
+        },
+        "chatId": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string",
+              "pattern": "^-?[0-9]+$"
+            }
+          ],
+          "description": "Chat ID (groups and channels: negative, -100…)."
+        },
+        "threadId": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Topic (message thread) in a forum group."
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of the bot token (default telegramBotToken)."
+        }
+      }
+    },
+    "receiver-discord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "description": "Discord webhook. Secret: discordWebhookUrl.",
+      "properties": {
+        "type": {
+          "const": "discord"
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of the webhook URL (default discordWebhookUrl)."
+        }
+      }
+    },
+    "receiver-email": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "to",
+        "from",
+        "smarthost"
+      ],
+      "description": "E-mail over SMTP. Secret: smtpPassword when username is set.",
+      "properties": {
+        "type": {
+          "const": "email"
+        },
+        "to": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Recipient(s), comma-separated."
+        },
+        "from": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Sender address."
+        },
+        "smarthost": {
+          "type": "string",
+          "pattern": "^[^\\s:]+:[0-9]+$",
+          "description": "SMTP server host:port (587: STARTTLS)."
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "description": "SMTP login; the password comes from the secret."
+        },
+        "requireTls": {
+          "type": "boolean",
+          "default": true,
+          "description": "Refuse to send without STARTTLS."
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of the SMTP password (default smtpPassword)."
+        }
+      }
+    },
+    "receiver-webhook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "description": "Alertmanager's JSON (version 4) POSTed to a URL. Secret: webhookUrl unless url is given.",
+      "properties": {
+        "type": {
+          "const": "webhook"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://\\S+$",
+          "description": "The endpoint when it holds no secret; else leave it out and set the secret."
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of the URL (default webhookUrl)."
+        }
+      }
+    },
+    "receiver-pushover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "description": "Pushover. Secrets: pushoverToken (application token), pushoverUserKey.",
+      "properties": {
+        "type": {
+          "const": "pushover"
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of the application token (default pushoverToken)."
+        },
+        "userSecretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of the user / group key (default pushoverUserKey)."
+        }
+      }
+    },
+    "receiver-ntfy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "topic"
+      ],
+      "description": "ntfy (ntfy.sh or your own server) through Alertmanager's webhook with ntfy's JSON publishing. Secret: only for protected topics (secretKey: an access token).",
+      "properties": {
+        "type": {
+          "const": "ntfy"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://[^\\s/]+(/\\S*)?$",
+          "default": "https://ntfy.sh",
+          "description": "The ntfy server (its root URL)."
+        },
+        "topic": {
+          "type": "string",
+          "pattern": "^[-_A-Za-z0-9]{1,64}$",
+          "description": "The topic. On a public server anyone who knows it can read it: use a long random name or a protected topic."
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of an access token (Bearer), for protected topics; none by default."
+        }
+      }
+    },
+    "receiver-msteams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "description": "Microsoft Teams (Workflows webhook, msteamsv2). Secret: msteamsWebhookUrl.",
+      "properties": {
+        "type": {
+          "const": "msteams"
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of the webhook URL (default msteamsWebhookUrl)."
+        }
+      }
+    },
+    "receiver-mattermost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "description": "Mattermost incoming webhook. Secret: mattermostWebhookUrl.",
+      "properties": {
+        "type": {
+          "const": "mattermost"
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Overrides the webhook's channel."
+        },
+        "secretKey": {
+          "type": "string",
+          "pattern": "^[-._a-zA-Z0-9]+$",
+          "description": "Secret key of the webhook URL (default mattermostWebhookUrl)."
+        }
+      }
+    },
+    "receivers": {
+      "type": "array",
+      "description": "Receivers, each notified of every alert of this severity (prod clusters only).",
+      "items": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "slack",
+              "telegram",
+              "discord",
+              "email",
+              "webhook",
+              "pushover",
+              "ntfy",
+              "msteams",
+              "mattermost"
+            ],
+            "description": "Receiver type (Alertmanager integration)."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "slack"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "$ref": "#/definitions/receiver-slack"
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "telegram"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "$ref": "#/definitions/receiver-telegram"
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "discord"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "$ref": "#/definitions/receiver-discord"
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "email"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "$ref": "#/definitions/receiver-email"
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "webhook"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "$ref": "#/definitions/receiver-webhook"
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "pushover"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "$ref": "#/definitions/receiver-pushover"
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "ntfy"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "$ref": "#/definitions/receiver-ntfy"
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "msteams"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "$ref": "#/definitions/receiver-msteams"
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "mattermost"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "$ref": "#/definitions/receiver-mattermost"
+            }
+          }
+        ]
+      }
     }
   }
 }

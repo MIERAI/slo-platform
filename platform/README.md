@@ -37,7 +37,7 @@ documented there) plus `cluster`; rendering fails when `cluster` is missing or n
 
 | Component | Application | Where | What |
 |---|---|---|---|
-| monitoring | `platform-monitoring` | every cluster | kube-prometheus-stack (`kps-*`): Prometheus (30 days on a 10 Gi volume), Alertmanager with the default routing (prod) or none (lab), Grafana |
+| monitoring | `platform-monitoring` | every cluster | kube-prometheus-stack (`kps-*`): Prometheus (30 days on a 10 Gi volume), Alertmanager with the default routing and `notify`'s receivers (prod) or none (lab), Grafana |
 | pyrra | `platform-pyrra` | every cluster | Pyrra operator + UI: `ServiceLevelObjective` → recording rules and burn-rate alerts; platform SLI rules |
 | blackbox | `platform-blackbox` | every cluster | blackbox exporter: the prober of probe SLOs |
 | [slo](slo) | per app × env (`<app>-slo-<env>`) | every cluster | chart: app.yaml `slos` → Pyrra objectives, Probes, the experiment runner's Role / RoleBinding |
@@ -73,8 +73,13 @@ documented there) plus `cluster`; rendering fails when `cluster` is missing or n
 
 The default policy ([concepts](../docs/concepts.md)): only SLO alerts (`severity` page / ticket) notify, only from prod
 (namespaces ending in `-dev` / `-staging` stay visible but silent), grouped by `[alertname, namespace]`. While an SLO's
-fast burn pages, its medium-burn page and its tickets are inhibited. The receiver `default` is a no-op placeholder
-until notification receivers arrive (P3).
+fast burn pages, its medium-burn page and its tickets are inhibited. Pages go to the receiver `page`, tickets to
+`ticket`: the receivers listed under `notify.page` / `notify.ticket` in platform.yaml (Telegram, Slack, Discord, e-mail,
+ntfy, Pushover, Teams, Mattermost, webhook), or nobody (`null`) while the list is empty; `Watchdog` goes to `deadman`
+when `notify.deadman` is set ([configuration](../docs/configuration.md#notify)). The configuration is generated in
+[root/templates/_notify.tpl](root/templates/_notify.tpl), the texts (en / zh / ja) are in
+[root/files/notify/](root/files/notify). Secrets come from the Secret `monitoring/alertmanager-notify` (bootstrap),
+mounted only when a receiver needs one.
 
 ## The daily regression (lab)
 

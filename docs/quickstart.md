@@ -160,13 +160,57 @@ a lab cluster (`regression.schedule` in platform.yaml; results as metrics, a tic
 Next: write your own application's `app.yaml` ([app-yaml.md](app-yaml.md)) and experiments
 ([experiments.md](experiments.md)), commit, push — Argo CD picks them up within a minute.
 
+## Optional: pages on your phone (ntfy)
+
+The quickstart's cluster has `role: lab`, and **a lab cluster notifies nobody** — whatever `notify` says: its alerts
+are what the experiments check. Notifications go out only from clusters with `role: prod` (and only for SLO alerts of
+namespaces not ending in `-dev` / `-staging`). So this step adds a second, prod cluster — on kind, to try it:
+
+1. Install the [ntfy](https://ntfy.sh) app and subscribe to a topic with a long random name (on the public server
+   anyone who knows the name can read it), e.g. `slo-pages-$(openssl rand -hex 8)`.
+2. In `platform.yaml` of your instance, add the cluster and replace `notify: {}` with a receiver (reference:
+   [configuration.md](configuration.md#notify)), then `bin/slo-platform check`, commit, push:
+
+   ```yaml
+   clusters:
+     lab: { role: lab, runtime: kind, objectStorage: none }
+     demo: { role: prod, runtime: kind, objectStorage: none }   # notifies; never runs experiments
+   notify:
+     page:
+       - { type: ntfy, topic: slo-pages-<random> }
+   ```
+
+3. Bootstrap it like the lab (a second kind cluster `slo-demo`: give Docker another 8 GB, or
+   `tofu -chdir=bootstrap/tofu/kind destroy` the lab first):
+
+   ```sh
+   export TF_VAR_cluster=demo KUBECONFIG=$TF_VAR_instance_dir/.secrets/demo/kubeconfig
+   tofu -chdir=bootstrap/tofu/kind init -reconfigure     # another cluster: another state
+   tofu -chdir=bootstrap/tofu/kind apply
+   ```
+
+4. Once `platform-monitoring` is Healthy, send Alertmanager a test page — it takes the real route, so it reaches the
+   phone exactly as a real fast burn of sample-app's probe SLO in prod would (within ~30 s, `[PAGE] sample-app-prod:
+   …`; it resolves on its own after 5 minutes):
+
+   ```sh
+   kubectl -n monitoring exec alertmanager-kps-alertmanager-0 -c alertmanager -- amtool alert add \
+     alertname=ErrorBudgetBurn severity=page long=1h namespace=sample-app-prod slo=sample-app-hello-probe \
+     --annotation=summary="test page from the quickstart" --alertmanager.url=http://localhost:9093
+   ```
+
+Nothing on the phone: [Troubleshooting](#troubleshooting) (`kubectl -n monitoring logs alertmanager-kps-alertmanager-0
+-c alertmanager | grep -i notify`). Fault experiments stay on the lab cluster; prod gets the same SLOs and alerts, and
+its pages reach you.
+
 ## 5. Clean up
 
 ```sh
 tofu -chdir=bootstrap/tofu/kind destroy        # deletes the kind cluster slo-lab
 ```
 
-The instance directory keeps its state and `.secrets/lab/` (delete them if you are done with this cluster). The
+The instance directory keeps its state and `.secrets/lab/` (delete them if you are done with this cluster). Did the
+ntfy step? `TF_VAR_cluster=demo`, `init -reconfigure` and `destroy` again for `slo-demo`. The
 GitHub repository is yours to keep or delete (`gh repo delete <you>/my-slo`).
 
 ## Troubleshooting
@@ -186,6 +230,7 @@ GitHub repository is yours to keep or delete (`gh repo delete <you>/my-slo`).
 | experiment: `expected alert already firing before the fault` | the probe SLO is still burning from the install (the app was not up yet while the prober already ran) | wait until `ErrorBudgetBurn` for `sample-app-dev` resolves (Alertmanager / Grafana), then run again |
 | experiment: `sample-app-dev is busy` | another run holds the namespace's lock (or a killed one, for up to 4 h) | wait; or remove the annotation `slo-platform/experiment` from the namespace if you are sure no run is active |
 | experiment: `fault injected but no effect within 3m` | the probe has no data yet (Prometheus not yet scraping it) | wait a few minutes after the install, run again |
+| ntfy: nothing arrives | a lab cluster (never notifies), a `-dev` namespace (never notifies), another topic, or ntfy refused it | `role: prod`; the test page's namespace `sample-app-prod`; Alertmanager's log (`… -c alertmanager \| grep -i notify`) |
 | experiment INVALID | the machine slept or Prometheus had a gap | run again, machine awake (`caffeinate` is used automatically on macOS; a closed lid still sleeps) |
 
 Everything in one view: `kubectl -n argocd get applications`, `kubectl get pods -A | grep -v -e Running -e Completed`,

@@ -22,3 +22,11 @@ jobs:
         run: sudo scripts/install-tools.sh
       - name: Render and validate (scripts/validate.sh)
         run: scripts/validate.sh
+  notify-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo scripts/install-tools.sh
+      - name: Notifications reach local receivers (scripts/notify-delivery.sh)
+        run: scripts/notify-delivery.sh

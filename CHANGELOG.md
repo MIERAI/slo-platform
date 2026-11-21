@@ -11,6 +11,12 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
   server serves this checkout and an `init` instance; `bootstrap/tofu/kind`; every Application Synced + Healthy;
   `--experiment`: sample-app-down must PASS; diagnosis on failure). Workflow `e2e`: weekly, on `v*` tags (with the
   experiment), on pull requests that change it, on demand.
+- Notifications (P3): `notify` in platform.yaml routes pages and tickets of prod clusters to receivers of Alertmanager's
+  own integrations — Telegram, Slack, Discord, e-mail, ntfy (webhook with ntfy's JSON publishing), Pushover, Teams,
+  Mattermost, webhook — plus a dead man's switch (`Watchdog` to an outside watcher). Texts in en / zh / ja. Secrets from
+  the secrets file's `notify:` → Secret `monitoring/alertmanager-notify` (bootstrap) → Alertmanager's `*_file` fields.
+  `check` warns about missing secret keys. CI: `amtool check-config` on every rendering, the configuration through
+  kube-prometheus-stack, and a delivery test against local stand-ins (`scripts/notify-delivery.sh`).
 - The instance model (P2): your repository holds `platform.yaml` (apiVersion slo-platform/v1) and `apps/`; the platform
   comes from this repository at `product.version`. Root chart `platform/root` (values = platform.yaml + `cluster`;
   roles prod / lab; self-managed root Application; time zones with their standard offset), replacing `apps/`.

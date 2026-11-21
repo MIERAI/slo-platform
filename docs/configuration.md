@@ -68,6 +68,9 @@ Exits non-zero with one line per problem:
   with an `slo` label names a declared SLO (`<app>-<slo name>`) of the application the namespace belongs to and an
   environment the SLO is rendered in. An experiment whose SLO was renamed or removed fails here, not in the lab at 9:00.
 
+Warnings (`!`, exit code unchanged): a prod cluster whose `notify` receivers need a secret key that
+`secrets/<cluster>.sops.yaml` lacks, or that has no secrets file ([notify](#how-the-secrets-get-there)).
+
 ### `upgrade`
 
 Sets `product.version` by editing that one line: comments and formatting stay. Check, commit, push; each cluster's root
@@ -85,8 +88,8 @@ once per cluster with `cluster: <name>` added. An annotated example: [platform.e
 | `product.version` | — (required) | Git ref (tag or branch) of the product every cluster runs. Upgrade = change it |
 | `instance.repo` | — (required) | Git URL of the instance repository (this file, `apps/`) |
 | `instance.revision` | `main` | Git ref of the instance repository Argo CD follows |
-| `timezone` | `Etc/UTC` | IANA name: the daily regression's CronJob `timeZone`, quiet hours (P3), the synthetic users' day (below) |
-| `language` | `en` | `en`, `zh`, `ja`: notification texts (P3) |
+| `timezone` | `Etc/UTC` | IANA name: the daily regression's CronJob `timeZone`, the synthetic users' day (below) |
+| `language` | `en` | `en`, `zh`, `ja`: notification texts (`notify.language` overrides it) |
 | `clusters.<name>.role` | — (required) | `prod`: notifies, never runs experiments. `lab`: fault experiments and the daily regression; notifies nobody |
 | `clusters.<name>.runtime` | `generic` | `kind`, `k3s`, `generic`: Chaos Mesh's container runtime socket (`/run/k3s/containerd/containerd.sock` on k3s, `/run/containerd/containerd.sock` otherwise) |
 | `clusters.<name>.objectStorage` | `none` | `in-cluster`: an S3-compatible store (SeaweedFS) for database backups |
@@ -94,7 +97,7 @@ once per cluster with `cluster: <name>` added. An annotated example: [platform.e
 | `grafana.adminSecret` | `grafana-admin` | Secret in `monitoring` with keys `admin-user`, `admin-password`; bootstrap creates it |
 | `regression.schedule` | `0 9 * * *` | Cron schedule of the daily experiment regression on lab clusters, in `timezone` |
 | `traffic.dayMinutes` | `1440` | Length of the synthetic users' day in minutes (1..1440); less compresses it (60: a day per hour, for tests) |
-| `notify` | `{}` | Who hears what (P3): accepted and ignored for now |
+| `notify` | `{}` | Who hears what on prod clusters: [below](#notify) |
 
 Cluster names are DNS labels (lower case, digits, `-`; at most 40 characters). Unknown keys are errors (typos fail the
 check, not silently the platform).
@@ -108,6 +111,86 @@ only for lab clusters, and it additionally refuses to run unless every node carr
 `slo-platform/lab=true` (bootstrap labels kind nodes; on other lab clusters label them yourself:
 `kubectl label nodes --all slo-platform/lab=true`).
 
+## notify
+
+Who hears what. Only clusters with `role: prod` notify; a lab cluster notifies nobody, whatever `notify` says (its
+alerts are what the experiments check: they stay visible in Alertmanager and Grafana). On prod, the platform's routing
+([concepts](concepts.md), [platform/README.md](../platform/README.md#alert-routing-alertmanager-prod)) stays as it is:
+only SLO alerts notify (`severity` `page` or `ticket`), only from namespaces not ending in `-dev` / `-staging`, grouped
+by alert name and namespace, a fast burn's page inhibiting the same SLO's medium-burn page and tickets. `notify` only
+says where each severity goes:
+
+```yaml
+notify:
+  page:                                  # receivers of every page (each gets every notification)
+    - { type: telegram, chatId: "-1001234567890" }
+    - { type: ntfy, topic: my-team-pages-7f3a9c }
+  ticket:                                # receivers of every ticket
+    - { type: email, to: ops@example.com, from: alertmanager@example.com, smarthost: "smtp.example.com:587", username: alertmanager }
+  deadman: { url: https://hc-ping.com/<uuid>, interval: 1m }   # optional
+  language: en                           # optional: overrides `language` for these texts
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `notify.page`, `notify.ticket` | none | Receivers (below). An empty or missing list: that severity notifies nobody |
+| `notify.deadman.url` | — | Dead man's switch: Alertmanager's `Watchdog` alert (always firing) is POSTed there every `interval`; the watcher (e.g. [healthchecks.io](https://healthchecks.io)) alarms when the pings stop — when Prometheus, Alertmanager or the cluster is gone. Leave `url` out to read it from the secret `deadmanUrl` (or `secretKey`) |
+| `notify.deadman.interval` | `1m` | Time between pings. Give the watcher this period and some grace |
+| `notify.language` | `language` | `en`, `zh`, `ja` |
+
+With `notify: {}` (the default) nothing notifies, as before.
+
+**Texts.** Every receiver gets the same short text in the chosen language: a title
+`[PAGE] <namespace>: <SLO>` (`[TICKET]`; `[PAGE RESOLVED]` when it is over; the alert name instead of the SLO when a
+notification groups several SLOs), then per alert the SLO, its burn-rate window, the summary and the runbook link (the
+SLO's `pyrra.dev/summary` and `pyrra.dev/runbook`, set by the `slo` chart). Resolved notifications are sent too.
+Templates: [platform/root/files/notify/](../platform/root/files/notify) (one file per language holds the words).
+
+### Receivers
+
+Alertmanager's own integrations (Alertmanager v0.34, the version kube-prometheus-stack runs here). Every receiver has a
+`type`; unknown keys are errors. Secrets never go into `platform.yaml`: each type reads its secret from a key of the
+secrets file's `notify:` (below), named by default as in the table; `secretKey` names another key (e.g. two Slack
+channels with two webhooks).
+
+| `type` | Fields | Secret key (default) | Example |
+|---|---|---|---|
+| `telegram` | `chatId` (required: a number, `-100…` for groups and channels), `threadId` (forum topic) | `telegramBotToken` (from @BotFather) | `{ type: telegram, chatId: "-1001234567890" }` |
+| `slack` | `channel` (overrides the webhook's) | `slackWebhookUrl` (an incoming webhook URL) | `{ type: slack, channel: "#ops" }` |
+| `discord` | — | `discordWebhookUrl` | `{ type: discord }` |
+| `email` | `to` (comma-separated), `from`, `smarthost` (`host:port`), `username`, `requireTls` (default `true`: STARTTLS) | `smtpPassword`, only with `username` | `{ type: email, to: ops@example.com, from: am@example.com, smarthost: "smtp.example.com:587", username: am }` |
+| `ntfy` | `topic` (required), `url` (default `https://ntfy.sh`) | none; `secretKey` for an access token (protected topics) | `{ type: ntfy, topic: my-team-pages-7f3a9c }` |
+| `pushover` | — | `pushoverToken` (application), `pushoverUserKey` (user or group; `userSecretKey` renames it) | `{ type: pushover }` |
+| `msteams` | — | `msteamsWebhookUrl` (a Teams Workflows webhook) | `{ type: msteams }` |
+| `mattermost` | `channel` | `mattermostWebhookUrl` | `{ type: mattermost, channel: ops }` |
+| `webhook` | `url` (when it holds no secret) | `webhookUrl`, when `url` is left out | `{ type: webhook, url: "http://bridge.tools.svc:8080/alerts" }` |
+
+- **ntfy** goes through Alertmanager's webhook with a custom payload (ntfy's JSON publishing to the server's root URL):
+  title and text as above, priority 5 for a firing page (3 when resolved), 3 for a ticket (2), a tag. Alertmanager
+  has no native ntfy integration. On a public server a topic is readable by anyone who knows its name: use a long
+  random name, or a protected topic with an access token (`secretKey: ntfyToken`).
+- **pushover**: priority 1 (high) for a firing page, 0 otherwise.
+- **webhook** sends Alertmanager's own JSON (version 4), for programs (a ticket system, a chat bridge).
+- Other integrations of Alertmanager (PagerDuty, Opsgenie, …) are not wired in yet: a `webhook` to a bridge, or a
+  pull request adding the type to `platform/root/templates/_notify.tpl` and the schema.
+
+### How the secrets get there
+
+```
+secrets/<cluster>.sops.yaml  notify: { telegramBotToken: … }
+  → bootstrap (tofu apply)   Secret monitoring/alertmanager-notify, one key each (always created, empty without any)
+  → platform-monitoring      alertmanagerSpec.secrets: [alertmanager-notify], only when a receiver reads a secret
+  → Alertmanager             /etc/alertmanager/secrets/alertmanager-notify/<key>, read through bot_token_file,
+                             api_url_file, webhook_url_file, url_file, auth_password_file, token_file, user_key_file,
+                             credentials_file at each notification
+```
+
+A key the Secret lacks fails only that receiver, at its first notification (Alertmanager logs it). `slo-platform check`
+warns about it: it reads the key names of `secrets/<cluster>.sops.yaml` (SOPS leaves names readable; no key needed)
+for every prod cluster. After changing the secrets file, run bootstrap again (`tofu apply`) to update the Secret;
+Alertmanager picks the files up on its own. An installation bootstrapped before notifications existed lacks the Secret:
+run bootstrap once before adding a receiver that needs one.
+
 ## Secrets
 
 `secrets/<cluster>.sops.yaml`, one per cluster, encrypted with [SOPS](https://github.com/getsops/sops) for the age
@@ -119,6 +202,9 @@ git:
   token: ghp_...          # read access for Argo CD to private product / instance repositories (and the regression's clone)
 grafana:
   adminPassword: ...      # → Secret monitoring/<grafana.adminSecret>; random when absent
+notify:                   # → Secret monitoring/alertmanager-notify: the receivers' secrets (see notify above)
+  telegramBotToken: ...
+  smtpPassword: ...
 secrets:                  # for applications: namespace → Secret name → key: value
   storefront-prod:
     payment-api: { api-key: ... }
@@ -138,5 +224,5 @@ teammate: append their age public key to `age:` in `.sops.yaml` (comma-separated
 secrets/*.sops.yaml`.
 
 **OpenTofu state holds secrets.** Bootstrap keeps its state in the instance directory (`.tofu/<cluster>.tfstate`); it
-contains the Argo CD repository credentials and Grafana's password in plain text. `init`'s `.gitignore` excludes it:
+contains the Argo CD repository credentials, Grafana's password and the notification secrets in plain text. `init`'s `.gitignore` excludes it:
 never commit it, and keep the directory as private as the age key.

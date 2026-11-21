@@ -9,7 +9,7 @@ variable "cluster" {
 }
 
 variable "secrets" {
-  description = "The decrypted secrets/<cluster>.sops.yaml (git.token, grafana.adminPassword, secrets.<namespace>.<name>.<key>); {} or null = none"
+  description = "The decrypted secrets/<cluster>.sops.yaml (git.token, grafana.adminPassword, notify.<key>, secrets.<namespace>.<name>.<key>); {} or null = none"
   type        = any
   sensitive   = true
   default     = {}
