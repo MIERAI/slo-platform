@@ -1,0 +1,25 @@
+# Your platform instance, in one file (draft — the contract is fixed in P2, docs/roadmap.md).
+# `init` reads it and writes your instance repository; nothing else needs editing.
+version: v0.1.0                    # the slo-platform release this instance runs (upgrade = change it)
+
+owner: your-org                    # GitHub organization or user of your instance repository
+registry: ghcr.io/your-org         # where your application images live
+timezone: Etc/UTC                  # schedules (daily regression), quiet hours, the day shape of synthetic traffic
+language: en                       # notification texts: en | zh | ja
+
+clusters:
+  prod:
+    context: my-prod               # kubeconfig context (never the current context implicitly)
+    runtime: k3s                   # kind | k3s | generic   (container runtime socket for Chaos Mesh, storage defaults)
+    objectStorage: in-cluster      # in-cluster | external  (database backups)
+  lab:                             # optional: where fault experiments run. Faults never touch a cluster without this role.
+    context: my-lab
+    runtime: k3s
+
+notify:                            # who hears what (Alertmanager receivers); only the prod cluster notifies
+  page:   { type: ntfy, url: "https://ntfy.sh/<your-topic>" }     # ntfy | slack | webhook | email
+  ticket: { type: webhook, url: "http://tickets.example/hook" }
+  quietHours: "21-8"               # pages still go out; spoken / noisy receivers wait
+
+regression:
+  schedule: "0 9 * * *"            # daily fault regression on the lab cluster

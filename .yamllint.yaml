@@ -1,0 +1,4 @@
+extends: relaxed
+rules:
+  line-length: { max: 160 }
+  colons: { max-spaces-after: -1 }   # aligned values in examples

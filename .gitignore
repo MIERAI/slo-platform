@@ -1,0 +1,6 @@
+.secrets/
+*.tfstate
+*.tfstate.*
+.terraform/
+__pycache__/
+*.decrypted.*
