@@ -6,5 +6,6 @@
 | [roadmap.md](roadmap.md) | Where the project is going, phase by phase |
 | quickstart.md (P4) | From nothing to the first passing experiment on kind in 30 minutes |
 | [app-yaml.md](app-yaml.md) | `app.yaml`: environments, components, SLOs, synthetic traffic, the metric conventions |
+| [experiments.md](experiments.md) | Fault experiments: the file format, predictions, running one, the daily regression, safety |
 | configuration.md (P2) | `platform.yaml` |
 | runbook.md (P4) | What to do when each alert fires |
