@@ -4,6 +4,14 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+### Added
+- Capacity tests: `scripts/capacity.py` and app.yaml `capacity:` (docs/capacity.md). Raises the load step by step
+  (k6, open loop, from a generator outside the cluster) until an SLO stops holding: the knee, req/s per pod, a
+  recommended ceiling, what ran out first (CPU per workload and node), and optionally how long the HPA takes to catch
+  a jump. Each step is judged on the SLOs' own SLI definitions; a step where the server held but the generator could
+  not send the rate is "limited", and the report says "capacity ≥ N" instead of a knee that is really the network's.
+  Lab only (node label `slo-platform/lab=true`); the namespace is marked like a fault experiment.
+
 ## [0.2.0] - 2026-11-21
 
 ### Changed

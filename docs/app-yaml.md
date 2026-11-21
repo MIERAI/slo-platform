@@ -126,6 +126,12 @@ environments:
 - The day's shape comes from `platform.yaml`: a day of `traffic.dayMinutes` (default 1440, a real day aligned to the
   clock) in `timezone` (its standard offset: summer time is ignored here).
 
+## capacity
+
+Optional: how a capacity test (`scripts/capacity.py`) loads and judges this application — the SLOs it is judged on,
+the workloads it reports, the request mix (default: `traffic.requests`), the ramp, and an optional autoscaling check.
+Reference: [capacity.md](capacity.md).
+
 ## Fault experiments and the fault switch
 
 The experiment runner (ServiceAccount `experiment-runner` in `slo-experiments`) gets a Role in every namespace of an
