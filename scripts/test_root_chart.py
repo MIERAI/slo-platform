@@ -275,6 +275,21 @@ class RootChart(unittest.TestCase):
         off = values(optional={"policies": False}, components={"kyverno": {"enabled": True}, "policies": {"enabled": True}})
         self.assertNotIn("platform-kyverno", ok(off, "prod"))
 
+    def test_components_per_cluster(self):
+        # a small lab drops Grafana and keeps prod's; cluster-level values merge over the top-level ones
+        v = values(components={"monitoring": {"values": {"grafana": {"additionalDataSources": [{"name": "x"}]}}}})
+        v["clusters"] = copy.deepcopy(v["clusters"])
+        v["clusters"]["lab"]["components"] = {"monitoring": {"values": {"grafana": {"enabled": False}}},
+                                              "blackbox": {"enabled": False}}
+        prod, lab = ok(v, "prod"), ok(v, "lab")
+        gp, gl = helm_values(prod["platform-monitoring"])["grafana"], helm_values(lab["platform-monitoring"])["grafana"]
+        self.assertNotEqual(gp.get("enabled"), False)
+        self.assertEqual(gp["additionalDataSources"], [{"name": "x"}])
+        self.assertFalse(gl["enabled"])
+        self.assertEqual(gl["additionalDataSources"], [{"name": "x"}])     # the top-level part still applies
+        self.assertIn("platform-blackbox", prod)
+        self.assertNotIn("platform-blackbox", lab)
+
     def test_components_values(self):
         n = {"page": [{"type": "telegram", "chatId": "-1001234567890"}]}
         v = values(notify=n, components={

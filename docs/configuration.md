@@ -104,6 +104,7 @@ once per cluster with `cluster: <name>` added. An annotated example: [platform.e
 | `clusters.<name>.runtime` | `generic` | `kind`, `k3s`, `generic`: Chaos Mesh's container runtime socket (`/run/k3s/containerd/containerd.sock` on k3s, `/run/containerd/containerd.sock` otherwise) |
 | `clusters.<name>.objectStorage` | `none` | `in-cluster`: an S3-compatible store (SeaweedFS) for database backups |
 | `clusters.<name>.extras` | `[]` | Your own components on that cluster: `[{ name, path }]`, [below](#extras) |
+| `clusters.<name>.components` | `{}` | Same keys as `components`, for that cluster only, deep-merged over the top-level ones — e.g. a small lab: `{ monitoring: { values: { grafana: { enabled: false } } } }` |
 | `optional.policies` | `false` | Kyverno and the workload baseline (admission policies in application namespaces) |
 | `applications.namespaceLabels` | `{}` | Labels of every application namespace `<app>-<env>` (app.yaml `namespace.labels` is merged over them) |
 | `applications.namespaceAnnotations` | `{}` | Annotations of every application namespace (app.yaml `namespace.annotations` is merged over them) |
