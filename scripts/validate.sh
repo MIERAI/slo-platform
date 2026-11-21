@@ -15,6 +15,7 @@
 #     experiments in one directory, extras): it must render, pass `slo-platform check`, and its extras kubeconform.
 #   - the optional admission policies: their own tests, then every application must pass them (what Kyverno checks
 #     at admission, but on the pull request)
+#   - every SLO of the examples is named by an experiment's expect.fire (scripts/generate-experiments.py --check)
 # Then scripts/test.sh (unit tests), when present. Portable: macOS bash 3 and Linux.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -166,6 +167,10 @@ PY
   echo "$out" | grep -vE '^\s*$'
   echo "$out" | grep -qE 'fail: 0, warn: 0, error: 0' || { echo "✗ policy violations (see above)"; exit 1; }
 fi
+
+echo "• experiment coverage: every SLO of the examples is named by an experiment (scripts/generate-experiments.py --check)"
+"$PY" -I scripts/generate-experiments.py --check --apps examples | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || { echo "✗ untested SLOs (see above)"; exit 1; }
 
 echo "• experiment exporter"
 "$PY" -I -m py_compile platform/experiments/exporter.py

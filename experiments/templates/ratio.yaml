@@ -1,0 +1,32 @@
+# ratio: every pod that exports both counters fails → SLOMetricAbsent (ticket), not a burn.
+# What makes the errors counter grow (a consumer stopped or slowed) is application-specific; the generator emits this
+# only when errors and total come from the same pods (the same derived selector), and predicts what is generic: with
+# those pods gone both counters vanish and the "SLI absent" ticket fires. The burn needs a hand-written experiment
+# (storefront storefront-worker-down).
+# Everything below the line is the experiment; scripts/generate-experiments.py fills the ${...} fields.
+---
+hypothesis: >-
+  Every pod with ${selector_text} fails (pod-failure). These pods export the SLI of ${slo_id}
+  (${sli}). With no pod left both counters are gone, so the SLO does not burn; its series vanish and
+  SLOMetricAbsent (ticket) fires within ${within} (Pyrra's absent rule: for ${absent_for}, in a rule group evaluated
+  every 150s; the runner sees such alerts up to ~2.3 min late: storefront-db-unreachable-v2). The SLO itself must not
+  page. Other SLOs of ${app} may (a probe of this service, a caller's availability).
+namespace: ${namespace}
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: { name: ${fault_name} }
+    spec:
+      action: pod-failure
+      mode: all
+      selector: { labelSelectors: ${selector} }
+      duration: ${duration}
+effect:   # the SLI's metric is gone
+  query: ${effect_query}
+  within: 3m
+timeout: ${timeout}
+expect:
+  fire:
+    - { alert: SLOMetricAbsent, labels: { namespace: ${namespace}, slo: ${slo_id} }, within: ${within} }
+  may_fire: ${may_fire}
+recover: 15m

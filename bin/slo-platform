@@ -922,7 +922,17 @@ def main(argv=None):
     p = sub.add_parser("upgrade", help="set product.version")
     p.add_argument("--version", required=True)
     p.add_argument("dir", nargs="?", default=".")
+    # -- experiments (P6): only a front for scripts/generate-experiments.py of this product checkout
+    p = sub.add_parser("experiments", help="generate fault experiments from the SLOs (generate) or gate coverage (check)")
+    p.add_argument("action", choices=["generate", "check"])
+    p.add_argument("args", nargs=argparse.REMAINDER,
+                   help="passed on: --apps DIR (default apps), --force, --env A,B, --missing, --dry-run")
     a = ap.parse_args(argv)
+    if a.cmd == "experiments":
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts",
+                              "generate-experiments.py")
+        return subprocess.call([sys.executable, script] + (["--check"] if a.action == "check" else []) + a.args)
+    # -- end experiments
     try:
         if a.cmd == "init":
             clusters = [parse_cluster(c) for c in (a.cluster or ["lab:lab:kind"])]

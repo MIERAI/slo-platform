@@ -1,0 +1,33 @@
+# age: every pod that exports the timestamp gauge fails → SLOMetricAbsent (ticket), not a burn.
+# "The job stops succeeding" is application-specific (suspend a CronJob, break its dependency): the generator cannot
+# know how, and a wrong guess would be a wrong prediction. The pods that export the gauge are known (the SLO's
+# matchers, the manifests' pod labels): with them gone the gauge vanishes, the 0/1 freshness rule has no input, and
+# the "SLI absent" ticket must fire — which proves the metric and matchers select live series. Staleness itself (the
+# burn) needs a hand-written experiment (storefront storefront-worker-down).
+# Everything below the line is the experiment; scripts/generate-experiments.py fills the ${...} fields.
+---
+hypothesis: >-
+  Every pod with ${selector_text} fails (pod-failure). These pods export the SLI of ${slo_id}
+  (${sli}). With no pod left the gauge is gone, not old: the freshness rule has no input and the SLO does not burn; its series vanish and
+  SLOMetricAbsent (ticket) fires within ${within} (Pyrra's absent rule: for ${absent_for}, in a rule group evaluated
+  every 150s; the runner sees such alerts up to ~2.3 min late: storefront-db-unreachable-v2). The SLO itself must not
+  page. Other SLOs of ${app} may (a probe of this service, a caller's availability).
+namespace: ${namespace}
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: { name: ${fault_name} }
+    spec:
+      action: pod-failure
+      mode: all
+      selector: { labelSelectors: ${selector} }
+      duration: ${duration}
+effect:   # the SLI's metric is gone
+  query: ${effect_query}
+  within: 3m
+timeout: ${timeout}
+expect:
+  fire:
+    - { alert: SLOMetricAbsent, labels: { namespace: ${namespace}, slo: ${slo_id} }, within: ${within} }
+  may_fire: ${may_fire}
+recover: 15m

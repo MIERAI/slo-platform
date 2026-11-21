@@ -340,7 +340,7 @@ def spec_files(dirs):
     """{experiment name: file} of every experiment directory (globs allowed)."""
     out = {}
     for d in dirs:
-        for f in sorted(glob.glob(os.path.join(d, "*.yaml"))):
+        for f in [f for x in sorted(glob.glob(d)) for f in experiment.experiment_paths(x)]:   # with generated/
             out.setdefault(os.path.splitext(os.path.basename(f))[0], f)
     return out
 
