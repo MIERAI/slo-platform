@@ -17,8 +17,15 @@ spec:
       containers:
         - name: curl
           image: curlimages/curl:8.11.1
-          command: ["sh", "-c", "while true; do curl -s -o /dev/null --max-time 2 'http://sample-app:8080/hello?name=synthetic'; sleep 0.5; done"]
+          # each round touches /tmp/beat: ready = the loop is still running (a hung loop sends nothing; the baseline
+          # policy also requires a readiness probe of every Deployment)
+          command: ["sh", "-c", "while true; do curl -s -o /dev/null --max-time 2 'http://sample-app:8080/hello?name=synthetic'; touch /tmp/beat; sleep 0.5; done"]
+          readinessProbe:
+            exec: { command: ["sh", "-c", "test -n \"$(find /tmp/beat -mmin -1 2>/dev/null)\""] }
+            periodSeconds: 20
           resources:
             requests: { cpu: 5m, memory: 8Mi }
             limits: { memory: 32Mi }
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { sizeLimit: 1Mi } }]
