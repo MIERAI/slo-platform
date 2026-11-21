@@ -191,14 +191,25 @@ def keep_awake():
             print(f"warning: could not keep the Mac awake (caffeinate): {e}", flush=True)
 
 
+def largest_hole(start, end, ts, born=None):
+    """The longest hole (seconds, where it began) between start and end in the sample timestamps ts. Before `born`
+    (the oldest sample Prometheus holds) there is no hole, only no history: a freshly installed Prometheus is young,
+    not asleep (its short history is the "young SLO" caveat, not missing data)."""
+    if born is not None:
+        start = min(max(start, born), end)
+    pts = [start] + sorted(t for t in ts if start <= t <= end) + [end]
+    return max((b - a, a) for a, b in zip(pts, pts[1:]))
+
+
 def prom_gap(start, end):
     """The longest hole (seconds, where it began) in Prometheus' samples of itself between start and end."""
     job = PROMETHEUS.split("/")[1].split(":")[0]   # kube-prometheus-stack: Prometheus scrapes itself as job <service>
     q = urllib.parse.quote(f'up{{job="{job}", container="prometheus"}}[{max(60, int(end - start))}s]')
     out = json.loads(kubectl("get", "--raw", f"{PROM}query?query={q}&time={end:.3f}"))
-    ts = sorted(float(v[0]) for r in out["data"]["result"] for v in r["values"])
-    pts = [start] + ts + [end]
-    return max((b - a, a) for a, b in zip(pts, pts[1:]))
+    ts = [float(v[0]) for r in out["data"]["result"] for v in r["values"]]
+    q = urllib.parse.quote(f'min(prometheus_tsdb_lowest_timestamp_seconds{{job="{job}"}})')
+    low = json.loads(kubectl("get", "--raw", f"{PROM}query?query={q}&time={end:.3f}"))["data"]["result"]
+    return largest_hole(start, end, ts, float(low[0]["value"][1]) if low else None)
 
 
 def prom_gap_reason(start, end):

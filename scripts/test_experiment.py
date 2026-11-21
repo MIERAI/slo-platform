@@ -148,5 +148,24 @@ class ParseReport(unittest.TestCase):
         self.assertEqual(e.parse_report("2026-11-20-findings.md", "# Findings\n", self.tz9), [])
 
 
+class PromGap(unittest.TestCase):
+    def test_a_sleeping_machine_is_a_hole(self):
+        ts = [float(t) for t in range(0, 600, 15)] + [float(t) for t in range(3600, 4200, 15)]
+        g, at = e.largest_hole(0, 4200, ts, born=0)
+        self.assertGreater(g, 2900)
+        self.assertEqual(at, 585)
+
+    def test_a_young_prometheus_is_not_a_hole(self):
+        # installed 20 min before the end of a run whose check window reaches back an hour
+        ts = [float(t) for t in range(3000, 4200, 15)]
+        g, _ = e.largest_hole(600, 4200, ts, born=3000)
+        self.assertLessEqual(g, 15)
+
+    def test_without_the_birth_time_the_leading_hole_counts(self):
+        ts = [float(t) for t in range(3000, 4200, 15)]
+        g, at = e.largest_hole(600, 4200, ts)
+        self.assertEqual((g, at), (2400, 600))
+
+
 if __name__ == "__main__":
     unittest.main()
