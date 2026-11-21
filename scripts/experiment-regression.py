@@ -4,8 +4,9 @@ for alerting. Run daily on the lab cluster by platform/experiments (a CronJob); 
   python3 scripts/experiment-regression.py [--lab-label KEY=VALUE] [--kubeconfig F] [--context C]
       [--prometheus NS/SVC:PORT] [--record NS/CONFIGMAP] [--only a,b] [--dry-run] [DIR ...]
 
-DIR: directories of experiment files (default: examples/*/experiments). Experiment names (file names) are unique
-across them: a result is stored under its name.
+DIR: directories of experiment files (default: examples/*/experiments), each with its generated/ subdirectory
+(scripts/generate-experiments.py). Experiment names (file names) are unique across them: a result is stored under
+its name.
 
 Waves: one queue per namespace, the queues in parallel (they share nothing but the "no other page" judgement, which
 the namespace marks of scripts/experiment.py handle). Within a namespace one experiment after the other: the
@@ -83,7 +84,7 @@ def experiment_files(dirs):
     files, seen = [], {}
     for d in dirs:
         for x in sorted(glob.glob(d)) or ([d] if os.path.isdir(d) else []):
-            for f in sorted(glob.glob(os.path.join(x, "*.yaml"))):
+            for f in experiment.experiment_paths(x):   # *.yaml and generated/*.yaml
                 name = os.path.splitext(os.path.basename(f))[0]
                 if name in seen:
                     raise ValueError(f"two experiments named {name}: {seen[name]} and {f} (results are stored by name)")

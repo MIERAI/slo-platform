@@ -6,6 +6,17 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ### Added
 - `clusters.<name>.components`: per-cluster component settings, deep-merged over `components` (clusters differ).
+- Generated fault experiments (P6): `scripts/generate-experiments.py` (and `slo-platform experiments generate|check`)
+  writes `<app>/experiments/generated/<app>-<slo>-<env>.yaml` per SLO from `experiments/templates/<SLI type>.yaml`,
+  when the pods to fail can be derived from app.yaml and the manifests (else: skipped, with the reason). probe: every
+  pod behind the Service fails → fast-burn page within a bound from the objective; availability, latency, age, ratio,
+  bool: the SLI's pods fail → `SLOMetricAbsent` (a generic fault cannot make an in-pod SLI count bad events). Never
+  overwrites without `--force` nor a file without `generated:`; `--missing` for uncovered SLOs only; `--check` is the
+  coverage gate (`scripts/validate.sh` runs it on the examples). The examples gain the four experiments their
+  hand-written ones did not cover (sample-app hello-availability / hello-latency, storefront web-probe / api-latency).
+- `experiment.py` checks an experiment's format before it runs (`check_format`: unknown fields refused, `generated:`
+  allowed); the regression, scorecard and alert report read `experiments/generated/` too; reports of generated
+  experiments go to `experiments/results/`.
 
 ## [0.1.0] - 2026-11-21
 

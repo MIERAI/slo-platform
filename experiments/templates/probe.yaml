@@ -1,0 +1,34 @@
+# probe: every pod behind the probed Service fails → the probe SLO's fast burn pages.
+# The blackbox prober calls the Service from outside the pods every 15s, so it sees an outage with no pod left
+# (examples/sample-app/experiments/sample-app-down.yaml). Every probe fails: the 1h error ratio grows by 1/60 per
+# minute and reaches Pyrra's fast-burn threshold, 14 × the budget, after 14 × (100 - objective)% × 60 min; then
+# `for: 2m`; plus a margin for scrapes, rule evaluation and the runner's polling. The generator computes that bound
+# (the `within`) and skips the SLO when it exceeds 30 min (an objective below ~97.1%: hold a total outage that long daily?
+# write it by hand) or when fast burn cannot fire at all (objective ≤ 92.86%).
+# Everything below the line is the experiment; scripts/generate-experiments.py fills the ${...} fields.
+---
+hypothesis: >-
+  Every pod behind Service ${service} (${selector_text}) fails (pod-failure). Users get connection errors on
+  ${target}; the blackbox probe fails every 15s. Prediction, from the objective: the 1h error ratio reaches 14 × the
+  ${budget}% budget after ${burn_minutes} min of failed probes; with `for: 2m` and ${margin} min of margin for scrapes,
+  rule evaluation and polling, ${slo_id} pages (fast burn, long 1h) within ${within}. Other SLOs of ${app} may page
+  too (an outage burns several); in-pod SLIs of these pods go absent (tickets).
+namespace: ${namespace}
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: { name: ${fault_name} }
+    spec:
+      action: pod-failure
+      mode: all
+      selector: { labelSelectors: ${selector} }
+      duration: ${duration}
+effect:   # the probe fails
+  query: ${effect_query}
+  within: 3m
+timeout: ${timeout}
+expect:
+  fire:
+    - { alert: ErrorBudgetBurn, labels: { namespace: ${namespace}, slo: ${slo_id}, severity: page, long: 1h }, within: ${within} }
+  may_fire: ${may_fire}
+recover: 15m

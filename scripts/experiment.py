@@ -42,6 +42,7 @@ scheduled regression (scripts/experiment-regression.py) uses it.
 """
 import argparse
 import datetime
+import glob
 import json
 import os
 import re
@@ -246,6 +247,56 @@ def check_deadlines(x):
     return out
 
 
+KEYS = {"hypothesis", "namespace", "fault", "load", "effect", "timeout", "hold", "expect", "recover", "ignore", "skip",
+        "clusters", "generated"}   # clusters: an older format the regression reports; generated: generate-experiments.py
+
+
+def check_format(x):
+    """The experiment's shape (docs/experiments.md): [problems]. `generated: {from, template, version}` marks a file
+    written by scripts/generate-experiments.py; the runner ignores it."""
+    if not isinstance(x, dict):
+        return ["not a mapping"]
+    out = [f"unknown field {k!r}" for k in sorted(set(x) - KEYS)]
+    for k in ("hypothesis", "namespace"):
+        if not isinstance(x.get(k), str) or not x[k].strip():
+            out.append(f"{k}: required (text)")
+    if not isinstance(x.get("fault", []), list) or not isinstance(x.get("load", []), list):
+        out.append("fault and load are lists")
+    e = x.get("expect")
+    if not isinstance(e, dict) or set(e) - {"fire", "quiet", "may_fire"}:
+        out.append("expect: a mapping of fire / quiet / may_fire")
+    else:
+        for part in ("fire", "quiet", "may_fire"):
+            for w in e.get(part) or []:
+                if not isinstance(w, dict) or not isinstance(w.get("alert"), str) or not isinstance(w.get("labels", {}), dict):
+                    out.append(f"expect.{part}: entries are {{alert, labels}}: {w!r}")
+    for k in ("timeout", "hold", "recover"):
+        if k in x:
+            try:
+                dur(x[k])
+            except ValueError as err:
+                out.append(f"{k}: {err}")
+    if isinstance(x.get("effect"), dict) and not x["effect"].get("query"):
+        out.append("effect: needs a query")
+    g = x.get("generated")
+    if g is not None and (not isinstance(g, dict) or set(g) != {"from", "template", "version"}):
+        out.append("generated: {from: <slo>, template: <type>, version: <n>}")
+    return out
+
+
+def experiment_paths(d):
+    """The experiment files of an application's experiments/ directory: hand-written (*.yaml) and generated
+    (generated/*.yaml, scripts/generate-experiments.py)."""
+    return sorted(glob.glob(os.path.join(d, "*.yaml"))) + sorted(glob.glob(os.path.join(d, "generated", "*.yaml")))
+
+
+def default_results_dir(path):
+    """Default reports directory: results/ next to the experiment; generated/<name>.yaml reports next to the
+    hand-written ones (experiments/results/), where the scorecard and alert-report look."""
+    d = os.path.dirname(os.path.abspath(path))
+    return os.path.join(os.path.dirname(d) if os.path.basename(d) == "generated" else d, "results")
+
+
 def kubectl(*args, stdin=None):
     r = subprocess.run(KUBE + list(args), input=stdin, capture_output=True, text=True)
     if r.returncode != 0:
@@ -383,6 +434,9 @@ class Run:
             self.fail(f"expected alert already firing before the fault: {stale} — cannot test it now")
             return
         objs = x.get("fault") or []
+        problems = check_format(x)
+        if problems:
+            raise RuntimeError("refused, not an experiment: " + "; ".join(problems))
         problems = check_deadlines(x)
         if problems:
             raise RuntimeError("refused, a fault must end by itself: " + "; ".join(problems))
@@ -567,9 +621,9 @@ class Run:
                 json.dumps({"data": {f"{self.name}.json": json.dumps(res, ensure_ascii=False)}}))
 
     def report(self, results_dir=None):
-        """Write the run to <results_dir>/<date it started>-<name>.md (default: results/ next to the experiment file).
+        """Write the run to <results_dir>/<date it started>-<name>.md (default: default_results_dir).
         The file holds every run of that day: a second run appends its own section and never replaces the first."""
-        d = results_dir or os.path.join(os.path.dirname(os.path.abspath(self.path)), "results")
+        d = results_dir or default_results_dir(self.path)
         os.makedirs(d, exist_ok=True)
         began = datetime.datetime.fromtimestamp(self.started or time.time()).astimezone()
         f = os.path.join(d, f"{began.date()}-{self.name}.md")
