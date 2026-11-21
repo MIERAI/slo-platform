@@ -1,0 +1,64 @@
+{{- /* slo-platform notification texts (Alertmanager templates). The words come from the language file appended
+below (slo.l.*). Alerts are grouped by alertname and namespace, routed per severity: a group is all page or all ticket. */ -}}
+
+{{- define "slo.severity" -}}
+{{- if eq .CommonLabels.severity "page" }}{{ template "slo.l.page" }}{{ else if eq .CommonLabels.severity "ticket" }}{{ template "slo.l.ticket" }}{{ else }}{{ .CommonLabels.severity }}{{ end -}}
+{{- end -}}
+
+{{- /* [PAGE] storefront-prod: storefront-api-availability — always starts with "[...] " (ntfy relies on that) */ -}}
+{{- define "slo.title" -}}
+[{{ template "slo.severity" . }}{{ if eq .Status "resolved" }} {{ template "slo.l.resolved" }}{{ end }}] {{ .CommonLabels.namespace }}: {{ if .CommonLabels.slo }}{{ .CommonLabels.slo }}{{ else }}{{ .CommonLabels.alertname }}{{ end }}
+{{- end -}}
+
+{{- define "slo.alert" }}
+- {{ if .Labels.slo }}{{ .Labels.slo }}{{ else }}{{ .Labels.alertname }}{{ end }}{{ if .Labels.long }} ({{ template "slo.l.window" }} {{ .Labels.long }}){{ end }}
+{{- with or .Annotations.summary .Annotations.description }}
+  {{ . }}{{ end }}
+{{- with or .Annotations.runbook .Annotations.runbook_url }}
+  {{ template "slo.l.runbook" }}: {{ . }}{{ end }}
+{{- end -}}
+
+{{- /* the body, plain text: namespace, then the firing and the resolved alerts with summary and runbook */ -}}
+{{- define "slo.text" -}}
+{{ template "slo.l.namespace" }}: {{ .CommonLabels.namespace }}
+{{- if .Alerts.Firing }}
+{{ template "slo.l.firing" }}:{{ range .Alerts.Firing }}{{ template "slo.alert" . }}{{ end }}
+{{- end }}
+{{- if .Alerts.Resolved }}
+{{ template "slo.l.resolved" }}:{{ range .Alerts.Resolved }}{{ template "slo.alert" . }}{{ end }}
+{{- end }}
+{{- end -}}
+
+{{- /* the same as HTML (Telegram, e-mail): values escaped */ -}}
+{{- define "slo.alert.html" }}
+• {{ if .Labels.slo }}{{ .Labels.slo | html }}{{ else }}{{ .Labels.alertname | html }}{{ end }}{{ if .Labels.long }} ({{ template "slo.l.window" }} {{ .Labels.long | html }}){{ end }}
+{{- with or .Annotations.summary .Annotations.description }}
+  {{ . | html }}{{ end }}
+{{- with or .Annotations.runbook .Annotations.runbook_url }}
+  <a href="{{ . | html }}">{{ template "slo.l.runbook" }}</a>{{ end }}
+{{- end -}}
+
+{{- define "slo.text.html" -}}
+{{ template "slo.l.namespace" }}: {{ .CommonLabels.namespace | html }}
+{{- if .Alerts.Firing }}
+<b>{{ template "slo.l.firing" }}</b>{{ range .Alerts.Firing }}{{ template "slo.alert.html" . }}{{ end }}
+{{- end }}
+{{- if .Alerts.Resolved }}
+<b>{{ template "slo.l.resolved" }}</b>{{ range .Alerts.Resolved }}{{ template "slo.alert.html" . }}{{ end }}
+{{- end }}
+{{- end -}}
+
+{{- define "slo.telegram" -}}
+<b>{{ template "slo.title" . }}</b>
+{{ template "slo.text.html" . }}
+{{- end -}}
+
+{{- define "slo.email.html" -}}
+<html><body><h3>{{ template "slo.title" . }}</h3><pre style="font-family: inherit">{{ template "slo.text.html" . }}</pre></body></html>
+{{- end -}}
+
+{{- /* ntfy: the title as the first line of the message (see platform/root/templates/_notify.tpl) */ -}}
+{{- define "slo.ntfy" -}}
+{{ template "slo.title" . }}
+{{ template "slo.text" . }}
+{{- end -}}

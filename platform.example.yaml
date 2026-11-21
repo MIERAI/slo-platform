@@ -36,4 +36,10 @@ regression:
 traffic:
   dayMinutes: 1440                 # the synthetic users' day; less compresses it (60: one day per hour, for tests)
 
-notify: {}                         # who hears what: P3 (accepted and ignored for now)
+notify:                            # who hears what on prod clusters (docs/configuration.md#notify); {}: nobody
+  page:                            # every page (an SLO burning fast) to each of these
+    - { type: ntfy, topic: my-team-pages-7f3a9c }        # https://ntfy.sh/my-team-pages-7f3a9c: a long random name
+    - { type: telegram, chatId: "-1001234567890" }       # bot token: secrets file notify.telegramBotToken
+  ticket:                          # every ticket (budget eroding slowly, an SLI gone)
+    - { type: email, to: ops@example.com, from: alertmanager@example.com, smarthost: "smtp.example.com:587", username: alertmanager }
+  deadman: { url: https://hc-ping.com/your-check-uuid, interval: 1m }   # optional: a watcher outside the cluster

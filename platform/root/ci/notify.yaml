@@ -1,0 +1,27 @@
+# notify with every receiver type (docs/configuration.md#notify): scripts/validate.sh renders it per cluster, extracts
+# Alertmanager's configuration and checks it with amtool (pinned to the chart's Alertmanager), the texts included.
+apiVersion: slo-platform/v1
+product: { repo: https://github.com/MIERAI/slo-platform.git, version: main }
+instance: { repo: https://github.com/your-org/slo-instance.git, revision: main }
+language: zh
+clusters:
+  prod: { role: prod, runtime: k3s }
+  lab: { role: lab, runtime: kind }      # notifies nobody, whatever notify says
+notify:
+  language: ja                           # overrides language for the texts
+  page:
+    - { type: telegram, chatId: "-1001234567890" }
+    - { type: telegram, chatId: 42, threadId: 7, secretKey: opsBotToken }
+    - { type: ntfy, topic: slo-page-3f9c2a }
+    - { type: ntfy, url: "https://ntfy.example.com", topic: pages, secretKey: ntfyToken }
+    - { type: pushover }
+    - { type: slack, channel: "#pages" }
+    - { type: discord }
+  ticket:
+    - { type: email, to: ops@example.com, from: alertmanager@example.com, smarthost: "smtp.example.com:587", username: alertmanager }
+    - { type: email, to: "a@example.com, b@example.com", from: am@example.com, smarthost: "relay.internal:25", requireTls: false }
+    - { type: webhook, url: "http://ticket-bridge.tools.svc:8080/alerts" }
+    - { type: webhook, secretKey: ticketWebhookUrl }
+    - { type: msteams }
+    - { type: mattermost, channel: tickets }
+  deadman: { interval: 1m }

@@ -20,6 +20,7 @@ locals {
   git_token        = var.git_token != "" ? var.git_token : try(tostring(var.secrets.git.token), "")
   has_git_token    = nonsensitive(local.git_token != "")
   grafana_password = try(tostring(var.secrets.grafana.adminPassword), "")
+  notify_secrets   = try({ for k, v in var.secrets.notify : k => tostring(v) }, {})
   generic_secrets = nonsensitive(toset(flatten([
     for ns in try(keys(var.secrets.secrets), []) : [for name in try(keys(var.secrets.secrets[ns]), []) : "${ns}/${name}"]
   ])))
@@ -114,6 +115,19 @@ resource "kubernetes_secret_v1" "grafana_admin" {
   }
 }
 
+# notify.<key>: the notification receivers' secrets (bot tokens, webhook URLs, SMTP password, …). Always created, empty
+# without any: Alertmanager mounts it (alertmanagerSpec.secrets) as soon as platform.yaml's notify has a receiver that
+# reads one of its keys, and a missing Secret would keep Alertmanager from starting. A missing key only fails that
+# receiver (`slo-platform check` warns about it).
+resource "kubernetes_secret_v1" "alertmanager_notify" {
+  metadata {
+    name      = "alertmanager-notify"
+    namespace = kubernetes_namespace_v1.ns["monitoring"].metadata[0].name
+    labels    = local.labels
+  }
+  data = local.notify_secrets
+}
+
 # The daily regression clones the product and the instance; private repositories need the token (lab clusters only)
 resource "kubernetes_secret_v1" "experiments_git" {
   count = local.lab && local.has_git_token ? 1 : 0
@@ -166,7 +180,8 @@ resource "helm_release" "root" {
   } } })]
 
   lifecycle { ignore_changes = [values, version] }
-  depends_on = [kubernetes_secret_v1.repository, kubernetes_secret_v1.grafana_admin, kubernetes_secret_v1.experiments_git, kubernetes_secret_v1.generic]
+  depends_on = [kubernetes_secret_v1.repository, kubernetes_secret_v1.grafana_admin, kubernetes_secret_v1.alertmanager_notify,
+  kubernetes_secret_v1.experiments_git, kubernetes_secret_v1.generic]
 }
 
 # ── Local copies for the operator: <instance_dir>/.secrets/<cluster>/ (gitignored by init) ──────────────────────────
