@@ -7,7 +7,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: YAML
         run: pipx run yamllint .
       - name: Shell
@@ -17,7 +17,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tools
         run: sudo scripts/install-tools.sh
       - name: Render and validate (scripts/validate.sh)
@@ -25,7 +25,7 @@ jobs:
   notify-delivery:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tools
         run: sudo scripts/install-tools.sh
       - name: Notifications reach local receivers (scripts/notify-delivery.sh)
