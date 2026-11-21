@@ -1,4 +1,5 @@
 # cert-manager: TLS for the CloudNativePG plugin's gRPC (operator ↔ plugin mTLS)
+{{- if include "root.enabled" (list . "cert-manager") }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -17,3 +18,4 @@ spec:
     automated: { prune: true, selfHeal: true }
     syncOptions: [CreateNamespace=true, ServerSideApply=true]
     retry: { limit: 10, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
+{{- end }}

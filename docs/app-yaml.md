@@ -1,7 +1,8 @@
 # app.yaml reference
 
-One `app.yaml` per application (`apps/<app>/app.yaml` in your instance repository; `examples/<app>/app.yaml` in this
-repository) is the one place an application is registered. The platform derives everything else from it (the
+One `app.yaml` per application (`apps/<app>/app.yaml` in your instance repository — `<instance.apps>/<app>/app.yaml`
+when platform.yaml names another directory, [configuration](configuration.md#an-existing-repository);
+`examples/<app>/app.yaml` in this repository) is the one place an application is registered. The platform derives everything else from it (the
 ApplicationSet of the root chart, [platform/root/files/applicationset.yaml](../platform/root/files/applicationset.yaml),
 mirrored by [scripts/render.py](../scripts/render.py)):
 
@@ -15,12 +16,16 @@ Every Application of environment `<env>` deploys into the namespace **`<name>-<e
 
 - labels `slo-platform/app: <name>`, `slo-platform/env: <env>` (the optional admission policies select on them), and
   `slo-platform/image-signatures: required` when `signedImages: true`;
-- the annotation `chaos-mesh.org/inject: enabled`: Chaos Mesh only injects faults into annotated namespaces.
+- the annotation `chaos-mesh.org/inject: enabled`: Chaos Mesh only injects faults into annotated namespaces;
+- your own labels and annotations: platform.yaml `applications.namespaceLabels` / `namespaceAnnotations`, with this
+  file's `namespace` over them ([below](#namespace)).
 
 ```yaml
 name: shop                       # namespaces shop-dev, shop-prod, …
 signedImages: true               # optional: label for an image-signature policy (later)
 private: true                    # optional: images need pull credentials; instances without them may leave it out
+namespace:                       # optional: metadata of every namespace of this application (below)
+  labels: { example.com/image-signatures: required }
 environments:
   - { name: dev, trafficScale: 0.3 }
   - name: prod
@@ -38,6 +43,24 @@ traffic: { … }                   # below
 
 Component names must be unique and must not end in `-slo` or `-traffic` together with the application's name
 (`shop-slo`, `shop-traffic` are taken).
+
+## namespace
+
+`namespace.labels` / `namespace.annotations`: added to every namespace `<name>-<env>` of the application, merged over
+platform.yaml's `applications.namespaceLabels` / `namespaceAnnotations` (a key in both: this file's value). The
+platform's own always win and cannot be set here (`check` rejects them): `slo-platform/app`, `slo-platform/env`,
+`slo-platform/image-signatures`, `chaos-mesh.org/inject`. Values are strings (quote `"true"`); label values follow
+Kubernetes' rules (at most 63 characters of letters, digits, `-`, `_`, `.`).
+
+```yaml
+signedImages: true
+namespace:
+  labels: { example.com/image-signatures: required }   # what your own signature policy selects on
+  annotations: { example.com/owner: team-a }
+```
+
+`signedImages: true` itself only adds `slo-platform/image-signatures: required` (for an image-signature policy the
+product may ship later); a policy of your own that selects on another label gets that label here.
 
 ## slos
 
@@ -109,4 +132,5 @@ The experiment runner (ServiceAccount `experiment-runner` in `slo-experiments`) 
 application with SLOs (rendered by platform/slo): Chaos Mesh `PodChaos` / `NetworkChaos`, `Jobs` (an experiment's
 load), and the ConfigMap **`<app>-faults`** — the convention for an application's own fault switch (an application
 that reads e.g. `products-errors: "1"` from it can be made to fail on purpose). Experiments live next to the
-application, in `examples/<app>/experiments/`, and run on lab clusters only.
+application, in `examples/<app>/experiments/` (an instance: `apps/<app>/experiments/`, or the directories of
+platform.yaml `regression.experiments`), and run on lab clusters only.

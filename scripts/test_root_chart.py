@@ -225,7 +225,99 @@ class RootChart(unittest.TestCase):
         self.assertEqual(helm_values(ok(v, "lab")["platform-experiments"]), {
             "schedule": "30 2 * * *", "timeZone": "Europe/Berlin",
             "product": {"repo": "https://git.example/p.git", "version": "v0.1.0"},
-            "instance": {"repo": "https://git.example/i.git", "revision": "live"}})
+            "instance": {"repo": "https://git.example/i.git", "revision": "live"},
+            "experiments": ["apps/*/experiments"]})
+
+    def test_experiment_directories(self):
+        def dirs(instance=None, regression=None):
+            v = values(instance={**BASE["instance"], **(instance or {})},
+                       regression={**BASE["regression"], **(regression or {})})
+            return helm_values(ok(v, "lab")["platform-experiments"])["experiments"]
+        self.assertEqual(dirs(), ["apps/*/experiments"])
+        self.assertEqual(dirs({"apps": "."}), ["*/experiments"])
+        self.assertEqual(dirs({"apps": "deploy/apps"}), ["deploy/apps/*/experiments"])
+        self.assertEqual(dirs({"apps": "."}, {"experiments": "experiments"}), ["experiments"])
+        self.assertEqual(dirs(None, {"experiments": ["a", "teams/*/experiments"]}), ["a", "teams/*/experiments"])
+
+    def test_extras(self):
+        v = values(clusters={"prod": {"role": "prod", "extras": [{"name": "mine", "path": "clusters/prod"},
+                                                                 {"name": "ui", "path": "ui"}]},
+                             "lab": {"role": "lab"}},
+                   instance={"repo": "https://git.example/i.git", "revision": "live"})
+        prod, lab = ok(v, "prod"), ok(v, "lab")
+        self.assertTrue({"extras-mine", "extras-ui"} <= set(prod))
+        self.assertFalse([n for n in lab if n.startswith("extras-")])
+        self.assertEqual(prod["extras-mine"]["spec"], {
+            "project": "default",
+            "source": {"repoURL": "https://git.example/i.git", "targetRevision": "live", "path": "clusters/prod"},
+            "destination": {"server": "https://kubernetes.default.svc", "namespace": "argocd"},
+            "syncPolicy": {"automated": {"prune": True, "selfHeal": True},
+                           "retry": {"limit": 5, "backoff": {"duration": "10s", "factor": 2, "maxDuration": "3m"}}}})
+        dup = values(clusters={"prod": {"role": "prod", "extras": [{"name": "a", "path": "one"}, {"name": "a", "path": "two"}]}})
+        rc, _, err = helm(dup, "prod")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("clusters.prod.extras: a twice", err)
+
+    def test_components_enabled(self):
+        names = {"monitoring": "platform-monitoring", "pyrra": "platform-pyrra", "blackbox": "platform-blackbox",
+                 "chaos-mesh": "platform-chaos-mesh", "cert-manager": "platform-cert-manager",
+                 "argo-rollouts": "platform-argo-rollouts", "cnpg": "platform-cnpg", "experiments": "platform-experiments",
+                 "kyverno": "platform-kyverno", "policies": "platform-policies", "object-storage": "platform-object-storage"}
+        with open(os.path.join(CHART, "values.schema.json")) as f:
+            self.assertEqual(set(json.load(f)["properties"]["components"]["properties"]), set(names))
+        both = set(ok(BASE, "prod")) | set(ok(BASE, "lab"))
+        for c, app in names.items():
+            v = values(components={c: {"enabled": False}})
+            self.assertIn(app, both, c)
+            self.assertNotIn(app, set(ok(v, "prod")) | set(ok(v, "lab")), c)
+            # enabled: true is the default, and does not override the role / option / storage that gates a component
+            self.assertEqual(ok(values(components={c: {"enabled": True}}), "prod"), ok(BASE, "prod"), c)
+        off = values(optional={"policies": False}, components={"kyverno": {"enabled": True}, "policies": {"enabled": True}})
+        self.assertNotIn("platform-kyverno", ok(off, "prod"))
+
+    def test_components_values(self):
+        n = {"page": [{"type": "telegram", "chatId": "-1001234567890"}]}
+        v = values(notify=n, components={
+            "monitoring": {"values": {
+                "prometheus": {"prometheusSpec": {"storageSpec": {"volumeClaimTemplate": {"spec": {
+                    "accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "15Gi"}}}}}}},
+                "grafana": {"enabled": False, "additionalDataSources": [{"name": "x", "type": "prometheus", "url": "http://x"}]},
+                "kubeApiServer": {"serviceMonitor": {"metricRelabelings": []}},
+                "kubeEtcd": None}},
+            "chaos-mesh": {"values": {"chaosDaemon": {"socketPath": "/custom.sock"}}},
+            "blackbox": {"values": {"replicas": 2}},
+            "experiments": {"values": {"gitCredentialsSecret": "my-git"}}})
+        base, objs = ok(values(notify=n), "lab"), ok(v, "lab")
+        m, b = helm_values(objs["platform-monitoring"]), helm_values(base["platform-monitoring"])
+        ps = m["prometheus"]["prometheusSpec"]
+        self.assertEqual(ps["storageSpec"]["volumeClaimTemplate"]["spec"]["resources"]["requests"]["storage"], "15Gi")
+        self.assertEqual(ps["retention"], "30d")                                     # maps merge: the rest stays
+        self.assertFalse(m["grafana"]["enabled"])                                    # false overrides
+        self.assertEqual(m["grafana"]["admin"], b["grafana"]["admin"])
+        self.assertEqual(len(m["grafana"]["additionalDataSources"]), 1)
+        self.assertEqual(m["kubeApiServer"]["serviceMonitor"]["metricRelabelings"], [])   # lists replace
+        self.assertIsNone(m["kubeEtcd"])                                             # null: the chart's default
+        self.assertEqual(m["alertmanager"], b["alertmanager"])                       # untouched, numbers included
+        cm = helm_values(objs["platform-chaos-mesh"])
+        self.assertEqual(cm["chaosDaemon"]["socketPath"], "/custom.sock")
+        self.assertEqual(cm["chaosDaemon"]["runtime"], "containerd")
+        self.assertEqual(helm_values(objs["platform-blackbox"])["replicas"], 2)
+        x = helm_values(objs["platform-experiments"])
+        self.assertEqual((x["gitCredentialsSecret"], x["schedule"]), ("my-git", BASE["regression"]["schedule"]))
+        # prod's Alertmanager after the round trip through the merge: the Telegram chat ID is still a number
+        am = helm_values(ok(v, "prod")["platform-monitoring"])["alertmanager"]["config"]
+        self.assertEqual(am, alertmanager(ok(values(notify=n), "prod"))["config"])
+        self.assertEqual(next(r for r in am["receivers"] if r["name"] == "page")["telegram_configs"][0]["chat_id"],
+                         -1001234567890)
+
+    def test_namespace_metadata_expressions(self):
+        v = values(applications={"namespaceLabels": {"example.com/a": "x", "b": ""},
+                                 "namespaceAnnotations": {"note": 'say "hi"'}})
+        patch = ok(v, "prod")["applications"]["spec"]["templatePatch"]
+        self.assertIn('(get $ns "labels" | default dict) (dict "b" "" "example.com/a" "x") }}', patch)
+        self.assertIn('(get $ns "annotations" | default dict) (dict "note" "say \\"hi\\"") }}', patch)
+        plain = ok(BASE, "prod")["applications"]["spec"]["templatePatch"]
+        self.assertIn('(get $ns "labels" | default dict) (dict) }}', plain)
 
     def test_product_version_everywhere(self):
         v = values(product={"repo": "https://git.example/p.git", "version": "v9.9.9"})
@@ -233,6 +325,8 @@ class RootChart(unittest.TestCase):
             for s in o["spec"].get("sources") or [o["spec"].get("source") or o["spec"]["template"]["spec"]["source"]]:
                 if s["repoURL"] == "https://git.example/p.git":
                     self.assertEqual(s["targetRevision"], "v9.9.9", name)
+                elif name.startswith("extras-"):   # pragma: no cover (none in BASE)
+                    self.assertEqual(s["repoURL"], v["instance"]["repo"], name)
                 elif "chart" not in s and "ref" not in s:
                     self.fail(f"{name}: source {s['repoURL']} is neither the product nor a chart")
 
@@ -257,6 +351,9 @@ class RootChart(unittest.TestCase):
         s = ok(v, "prod")["applications"]
         g = render._git_generator(s["spec"]["generators"])
         self.assertEqual(g, {"repoURL": "https://git.example/i.git", "revision": "live", "files": [{"path": "apps/*/app.yaml"}]})
+        for apps, glob in ((".", "*/app.yaml"), ("deploy/apps", "deploy/apps/*/app.yaml")):
+            s2 = ok(values(instance={**BASE["instance"], "apps": apps}), "prod")["applications"]
+            self.assertEqual(render._git_generator(s2["spec"]["generators"])["files"], [{"path": glob}], apps)
         src = s["spec"]["template"]["spec"]["source"]
         self.assertEqual((src["repoURL"], src["targetRevision"]), ("https://git.example/p.git", "v0.1.0"))
         patch = s["spec"]["templatePatch"]
@@ -299,7 +396,14 @@ class RootChart(unittest.TestCase):
                 (values(notify={"ticket": [{"type": "email", "to": "a@b.c"}]}), "prod", "from"),
                 (values(notify={"deadman": {}}), "prod", "deadman"),
                 (values(notify={"deadman": {"url": "https://x.example/", "secretKey": "k"}}), "prod", "deadman"),
-                (values(notify={"language": "de"}), "prod", "language")):
+                (values(notify={"language": "de"}), "prod", "language"),
+                (values(instance={**BASE["instance"], "apps": "../x"}), "prod", "apps"),
+                (values(regression={"experiments": "/abs"}), "prod", "experiments"),
+                (values(clusters={"prod": {"role": "prod", "extras": [{"name": "a"}]}}), "prod", "path"),
+                (values(components={"grafana": {"enabled": False}}), "prod", "grafana"),
+                (values(components={"pyrra": {"values": {"x": 1}}}), "prod", "values"),     # kustomize-sourced
+                (values(applications={"namespaceLabels": {"a": "b c"}}), "prod", "namespaceLabels"),
+                (values(applications={"namespaceLabels": {"a": 1}}), "prod", "namespaceLabels")):
             rc, _, err = helm(v, cluster)
             self.assertNotEqual(rc, 0, want)
             self.assertIn(want, err)
@@ -328,6 +432,27 @@ class RenderInstance(unittest.TestCase):
                 self.assertEqual(a["root"], inst)
                 self.assertTrue(a["path"].startswith("apps/"), a)
         self.assertNotIn("platform-experiments", apps)
+
+    def test_existing_repo_instance(self):
+        """platform/root/ci/existing-repo.yaml: applications at the root, extras (a kustomize directory, plain
+        manifests) rendered from the instance."""
+        if not os.path.isdir(os.path.join(ROOT, "examples")):
+            self.skipTest("no examples")
+        platform = os.path.join(CHART, "ci", "existing-repo.yaml")
+        inst = render.example_instance(ROOT, platform)
+        self.assertTrue(os.path.exists(os.path.join(inst, "storefront", "app.yaml")))
+        self.assertTrue(os.path.exists(os.path.join(inst, "experiments", "api-errors.yaml")))
+        self.assertFalse(os.path.exists(os.path.join(inst, "storefront", "experiments")))
+        for cluster in ("laptop", "lab"):
+            apps = {a["name"]: a for a in render.apps(ROOT, platform=platform, cluster=cluster)}
+            self.assertEqual(apps[f"extras-{cluster}"]["root"], inst)
+            self.assertEqual(apps[f"extras-{cluster}"]["path"], f"clusters/{cluster}")
+            self.assertEqual(apps["storefront-prod"]["path"], "storefront/overlays/prod")
+            self.assertEqual(apps["storefront-worker-dev"]["path"], "storefront/worker/chart")
+            self.assertIn("storefront-slo-prod", apps)
+            docs = [d for d in yaml.safe_load_all(render.render(apps[f"extras-{cluster}"])) if d]
+            self.assertEqual([(d["kind"], d["metadata"]["name"]) for d in docs], [("Application", "platform-ui")])
+            self.assertNotIn("platform-kyverno", apps)       # components.kyverno.enabled: false
 
 
 if __name__ == "__main__":

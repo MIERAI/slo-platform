@@ -1,4 +1,4 @@
-{{- if .Values.optional.policies }}
+{{- if and .Values.optional.policies (include "root.enabled" (list . "policies")) }}
 # optional.policies: admission policies for every application namespace (label slo-platform/app). Retries until Kyverno's CRDs exist.
 apiVersion: argoproj.io/v1alpha1
 kind: Application

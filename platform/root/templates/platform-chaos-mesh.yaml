@@ -1,10 +1,10 @@
-{{- $c := include "root.cluster" . | fromJson }}
 # Fault injection for the SLO experiments: Chaos Mesh, pinned chart. Only namespaces annotated
 # chaos-mesh.org/inject=enabled can be targeted (enableFilterNamespace): the application namespaces (set by the
 # ApplicationSet), never the platform's. Faults only on lab clusters (docs/concepts.md); installed on every cluster
 # (only the lab's experiments use it).
 # After a certificate change restart chaos-daemon by hand (rollme is ignored, so nothing restarts it): a daemon with
 # the old certificate fails every injection with "certificate signed by unknown authority".
+{{- if include "root.enabled" (list . "chaos-mesh") }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -18,26 +18,7 @@ spec:
     targetRevision: 2.8.8
     helm:
       valuesObject:
-        # The chart renders differently each time (self-signed certificates, a random "rollme" pod annotation):
-        # Argo CD would re-sync and restart it forever. Certificates from cert-manager (platform-cert-manager), no
-        # chaosd mTLS (chaosd = physical machines, unused), rollme ignored below.
-        webhook: { certManager: { enabled: true } }
-        controllerManager:
-          chaosdSecurityMode: false
-          replicaCount: 1
-          # pod-failure swaps the containers' image for this one: the default (pause:latest) is denied by the
-          # admission policy disallow-latest-tag (optional platform/policies) in the application namespaces
-          podChaos: { podFailure: { pauseImage: registry.k8s.io/pause:3.10 } }
-          enableFilterNamespace: true
-          resources: { requests: { cpu: 25m, memory: 128Mi }, limits: { memory: 384Mi } }
-        chaosDaemon:
-          runtime: containerd
-          # containerd's socket, by the cluster's runtime: kind and most distributions (generic) use the default, k3s
-          # keeps its own containerd elsewhere. The wrong one fails every injection ("cannot find the pod").
-          socketPath: {{ ternary "/run/k3s/containerd/containerd.sock" "/run/containerd/containerd.sock" (eq $c.runtime "k3s") }}
-          resources: { requests: { cpu: 10m, memory: 64Mi }, limits: { memory: 256Mi } }
-        dashboard: { create: false }    # experiments are files (apps/<app>/experiments), run by scripts/experiment.py
-        dnsServer: { create: false }
+        {{- include "root.helmValues" (list . "chaos-mesh" (include "root.chaos-mesh.values" .)) | nindent 8 }}
   destination:
     server: https://kubernetes.default.svc
     namespace: chaos-mesh
@@ -48,3 +29,27 @@ spec:
     automated: { prune: true, selfHeal: true }
     syncOptions: [CreateNamespace=true, ServerSideApply=true, RespectIgnoreDifferences=true]
     retry: { limit: 5, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
+{{- end }}
+{{- define "root.chaos-mesh.values" }}
+{{- $c := include "root.cluster" . | fromJson }}
+# The chart renders differently each time (self-signed certificates, a random "rollme" pod annotation):
+# Argo CD would re-sync and restart it forever. Certificates from cert-manager (platform-cert-manager), no
+# chaosd mTLS (chaosd = physical machines, unused), rollme ignored below.
+webhook: { certManager: { enabled: true } }
+controllerManager:
+  chaosdSecurityMode: false
+  replicaCount: 1
+  # pod-failure swaps the containers' image for this one: the default (pause:latest) is denied by the
+  # admission policy disallow-latest-tag (optional platform/policies) in the application namespaces
+  podChaos: { podFailure: { pauseImage: registry.k8s.io/pause:3.10 } }
+  enableFilterNamespace: true
+  resources: { requests: { cpu: 25m, memory: 128Mi }, limits: { memory: 384Mi } }
+chaosDaemon:
+  runtime: containerd
+  # containerd's socket, by the cluster's runtime: kind and most distributions (generic) use the default, k3s
+  # keeps its own containerd elsewhere. The wrong one fails every injection ("cannot find the pod").
+  socketPath: {{ ternary "/run/k3s/containerd/containerd.sock" "/run/containerd/containerd.sock" (eq $c.runtime "k3s") }}
+  resources: { requests: { cpu: 10m, memory: 64Mi }, limits: { memory: 256Mi } }
+dashboard: { create: false }    # experiments are files (apps/<app>/experiments), run by scripts/experiment.py
+dnsServer: { create: false }
+{{- end }}

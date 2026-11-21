@@ -1,0 +1,29 @@
+{{- /*
+clusters.<name>.extras: your own components on this cluster, one Application extras-<name> each, from the instance
+repository at instance.revision (a kustomize directory or plain manifests, typically Argo CD Applications). Into argocd:
+the Applications they hold manage their own destinations. prune: removing a file there removes what it made.
+*/}}
+{{- $c := include "root.cluster" . | fromJson }}
+{{- $seen := dict }}
+{{- range $c.extras }}
+{{- if hasKey $seen .name }}{{ fail (printf "clusters.%s.extras: %s twice" $c.name .name) }}{{ end }}
+{{- $_ := set $seen .name true }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: extras-{{ .name }}
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: {{ $.Values.instance.repo }}
+    targetRevision: {{ $.Values.instance.revision | quote }}
+    path: {{ .path | quote }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    retry: { limit: 5, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
+{{- end }}

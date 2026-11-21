@@ -3,9 +3,11 @@
 The platform's components. Rule: **nothing here names an application**. One chart, [root](root), turns an instance's
 `platform.yaml` into everything a cluster runs: it renders, for the cluster named by its `cluster` parameter, one
 Argo CD Application per component (from this repository at `product.version`), the ApplicationSet that turns every
-`apps/<app>/app.yaml` of the instance repository into Applications ([root/files/applicationset.yaml](root/files/applicationset.yaml):
-namespaces and their labels, SLOs, synthetic traffic, the experiment runner's rights in each namespace), and the root
-Application itself.
+`apps/<app>/app.yaml` (`instance.apps`) of the instance repository into Applications
+([root/files/applicationset.yaml](root/files/applicationset.yaml): namespaces and their labels, SLOs, synthetic traffic,
+the experiment runner's rights in each namespace), the cluster's `extras` (Applications `extras-<name>` from the
+instance repository), and the root Application itself. `components.<component>` of platform.yaml drops a component or
+merges values into a Helm-sourced one ([docs/configuration.md](../docs/configuration.md#components)).
 
 ## The root Application
 
@@ -85,7 +87,8 @@ mounted only when a receiver needs one.
 
 The CronJob `slo-experiments/experiment-regression` clones the product at `product.version` (the scripts) and the
 instance at `instance.revision` (the experiments) when it starts, and runs
-`scripts/experiment-regression.py --record slo-experiments/experiment-results <instance>/apps/*/experiments`. Private
+`scripts/experiment-regression.py --record slo-experiments/experiment-results <instance>/<dir> …` for every directory
+(glob) of `regression.experiments` (default `apps/*/experiments`, i.e. `<instance.apps>/*/experiments`). Private
 repositories: the optional Secret `slo-experiments/git-credentials` (key `token`, sent as `x-access-token`), created by
 bootstrap when a git token is given.
 

@@ -21,3 +21,67 @@ missing or names no entry: a root Application without a valid cluster must not r
 repoURL: {{ .Values.product.repo }}
 targetRevision: {{ .Values.product.version | quote }}
 {{- end }}
+
+{{- /* root.component: components.<name> of platform.yaml with its defaults, as JSON: {enabled, values} */}}
+{{- define "root.component" -}}
+{{- $root := index . 0 }}{{ $name := index . 1 }}
+{{- $c := index ($root.Values.components | default dict) $name | default dict }}
+{{- dict "enabled" (ne (toString (dig "enabled" true $c)) "false") "values" (dig "values" dict $c) | toJson }}
+{{- end }}
+
+{{- /* root.enabled: "true" unless components.<name>.enabled is false ((list . "<name>"); empty = false) */}}
+{{- define "root.enabled" -}}
+{{- if (include "root.component" . | fromJson).enabled }}true{{ end }}
+{{- end }}
+
+{{- /*
+root.helmValues: a Helm-sourced component's valuesObject ((list . "<name>" "<its values as YAML>")): as written when
+platform.yaml has no components.<name>.values, else with them deep-merged over it (root.deepMerge).
+*/}}
+{{- define "root.helmValues" -}}
+{{- $over := (include "root.component" (list (index . 0) (index . 1)) | fromJson).values }}
+{{- if $over }}
+{{- include "root.deepMerge" (dict "base" (index . 2 | fromYaml) "over" $over) | fromJson | toYaml }}
+{{- else }}
+{{- index . 2 | trim }}
+{{- end }}
+{{- end }}
+
+{{- /* root.deepMerge: (dict "base" … "over" …) → JSON: maps merge key by key, anything else (lists, scalars, null) in
+"over" replaces what "base" has */}}
+{{- define "root.deepMerge" -}}
+{{- $out := deepCopy .base }}
+{{- range $k, $v := .over }}
+{{- if and (kindIs "map" $v) (kindIs "map" (index $out $k)) }}
+{{- $_ := set $out $k (include "root.deepMerge" (dict "base" (index $out $k) "over" $v) | fromJson) }}
+{{- else }}
+{{- $_ := set $out $k $v }}
+{{- end }}
+{{- end }}
+{{- toJson $out }}
+{{- end }}
+
+{{- /* root.appsGlob: where the ApplicationSet finds the applications: <instance.apps>/<app>/app.yaml as a glob */}}
+{{- define "root.appsGlob" -}}
+{{- $apps := .Values.instance.apps | default "apps" | toString }}
+{{- if eq $apps "." }}*/app.yaml{{ else }}{{ $apps }}/*/app.yaml{{ end }}
+{{- end }}
+
+{{- /* root.experiments: the daily regression's experiment directories (globs), as a JSON list: regression.experiments,
+default <instance.apps>/<every app>/experiments */}}
+{{- define "root.experiments" -}}
+{{- $x := .Values.regression.experiments }}
+{{- if not $x }}
+{{- $apps := .Values.instance.apps | default "apps" | toString }}
+{{- $x = ternary "*/experiments" (printf "%s/*/experiments" $apps) (eq $apps ".") }}
+{{- end }}
+{{- if kindIs "string" $x }}{{ $x = list $x }}{{ end }}
+{{- toJson $x }}
+{{- end }}
+
+{{- /* root.goDict: a map of strings as a Go template expression for Argo CD's templates: (dict "k" "v" …) */}}
+{{- define "root.goDict" -}}
+(dict
+{{- range $k, $v := . | default dict }} {{ printf "%q" (toString $k) }} {{ printf "%q" (toString $v) }}{{ end -}}
+)
+{{- end }}

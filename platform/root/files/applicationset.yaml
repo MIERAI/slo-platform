@@ -1,14 +1,17 @@
-# Every application of the instance (apps/<app>/app.yaml in the instance repository; reference: docs/app-yaml.md):
+# Every application of the instance (<apps>/<app>/app.yaml in the instance repository, <apps> = platform.yaml
+# instance.apps, default apps; reference: docs/app-yaml.md):
 # one Argo CD Application per component × environment, named <component>-<env>, deployed into the namespace <name>-<env>.
-#   component kustomize: <dir>  → instance repo, path apps/<app>/<dir>/<env>
-#   component helm: <dir>       → instance repo, chart apps/<app>/<dir>/chart, values apps/<app>/<dir>/values-<env>.yaml
+#   component kustomize: <dir>  → instance repo, path <apps>/<app>/<dir>/<env>
+#   component helm: <dir>       → instance repo, chart <apps>/<app>/<dir>/chart, values <apps>/<app>/<dir>/values-<env>.yaml
 #   slos                        → component <name>-slo: product repo, chart platform/slo, values {app, env, slos} (Pyrra
 #                                 objectives, probes, and the experiment runner's Role / RoleBinding in that namespace)
 #   traffic                     → component <name>-traffic: product repo, chart platform/traffic, values {app, env, scale,
 #                                 peakRpm, requests, day} (synthetic users); not in environments with trafficScale: 0
 # The namespace gets the labels the platform keys on (slo-platform/app, slo-platform/env; slo-platform/image-signatures
 # when signedImages) and the annotation that lets the fault experiments target it (Chaos Mesh only injects into
-# annotated namespaces). ignoreDifferences (app.yaml) is passed through, with RespectIgnoreDifferences.
+# annotated namespaces), over app.yaml's namespace.labels / namespace.annotations, over platform.yaml's
+# applications.namespaceLabels / namespaceAnnotations (filled in below as Go dict expressions). ignoreDifferences
+# (app.yaml) is passed through, with RespectIgnoreDifferences.
 # Rendered by the root chart (templates/applicationset.yaml), which fills in the ${…} placeholders from platform.yaml.
 # scripts/render.py (appdesc.applications) renders the same way for validate.sh and the scripts: keep both in step.
 apiVersion: argoproj.io/v1alpha1
@@ -27,7 +30,7 @@ spec:
                 - git:
                     repoURL: "${INSTANCE_REPO}"
                     revision: "${INSTANCE_REVISION}"
-                    files: [{ path: "apps/*/app.yaml" }]   # the one place that says where app.yaml files live
+                    files: [{ path: "${APPS_GLOB}" }]   # the one place that says where app.yaml files live (instance.apps)
                 # prefixed keys: the app, the component and the environment all have a name
                 - list:
                     elementsYaml: |
@@ -103,11 +106,11 @@ spec:
         {{- if hasKey . "ignoreDifferences" }}
         syncOptions: [CreateNamespace=true, RespectIgnoreDifferences=true]
         {{- end }}
-        managedNamespaceMetadata:
-          annotations: { chaos-mesh.org/inject: enabled }   # fault experiments may target it (platform-chaos-mesh)
-          labels:
-            slo-platform/app: "{{ .name }}"
-            slo-platform/env: "{{ .env.name }}"
-            {{- if and (hasKey . "signedImages") .signedImages }}
-            slo-platform/image-signatures: required
-            {{- end }}
+        {{- $own := dict "slo-platform/app" .name "slo-platform/env" .env.name }}
+        {{- if and (hasKey . "signedImages") .signedImages }}{{ $_ := set $own "slo-platform/image-signatures" "required" }}{{ end }}
+        {{- $ns := dict }}{{ if hasKey . "namespace" }}{{ $ns = .namespace }}{{ end }}
+        {{- $labels := merge $own (get $ns "labels" | default dict) ${NAMESPACE_LABELS} }}
+        {{- $annotations := merge (dict "chaos-mesh.org/inject" "enabled") (get $ns "annotations" | default dict) ${NAMESPACE_ANNOTATIONS} }}
+        managedNamespaceMetadata:   # chaos-mesh.org/inject: fault experiments may target it (platform-chaos-mesh)
+          labels: {{ toJson $labels }}
+          annotations: {{ toJson $annotations }}

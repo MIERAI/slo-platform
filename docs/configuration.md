@@ -27,6 +27,10 @@ README.md                          # next steps
 .gitignore                         # OpenTofu state (.tofu/, *.tfstate*), decrypted files
 ```
 
+`apps/` is the default: `instance.apps` names another directory, or `.` for applications at the repository root, and
+`regression.experiments` other experiment directories — for a repository that existed before slo-platform
+([An existing repository](#an-existing-repository)).
+
 Argo CD reads `platform.yaml` and `apps/*/app.yaml` from the instance repository at `instance.revision`; the platform's
 charts and components come from `product.repo` at `product.version`. An application's own manifests (its components)
 come from the instance repository; its SLOs and synthetic users are rendered by the product's `platform/slo` and
@@ -56,14 +60,19 @@ Exits non-zero with one line per problem:
 - `platform.yaml` against `platform/root/values.schema.json` of the product checkout the command runs from — the file
   Helm validates the root chart's values with (the chart's `values.yaml` defaults merged in, as Helm does) — and the
   time zone against the IANA database.
-- every `apps/*/app.yaml`: `name` is the directory name (a DNS label); `environments` is a non-empty list of unique
+- `clusters.<name>.extras`: names unique per cluster, every `path` a directory of the instance; `components.<name>`:
+  a known component, and `values` only for the Helm-sourced ones ([Components](#components)); namespace labels and
+  annotations (`applications.*`, app.yaml `namespace`): valid keys, string values (labels: valid label values), none of
+  the platform's own (`slo-platform/*`, `chaos-mesh.org/inject`).
+- every `<instance.apps>/*/app.yaml` (default `apps/*/app.yaml`): `name` is the directory name (a DNS label); `environments` is a non-empty list of unique
   names, `trafficScale` ≥ 0, `promotion.from` an earlier environment; `components` unique, each exactly one of
   `kustomize` / `helm`, not `<app>-slo` / `<app>-traffic`, and their files exist for every environment
   (`<dir>/<env>/kustomization.yaml`; `<dir>/chart/Chart.yaml` and `<dir>/values-<env>.yaml`); `services` name a
   component; every SLO has a unique name, an objective between 0 and 100, **exactly one SLI type** with its required
   fields, and `environments` among the application's; `traffic` has `peakRpm` > 0 and requests with `weight` > 0,
   `method`, `service`, `port`, a `path` starting with `/`, `badRate` between 0 and 1.
-- every `apps/*/experiments/*.yaml`: a unique name across applications; `namespace` is `<app>-<env>` of an existing
+- every `*.yaml` of the experiment directories (`regression.experiments`, default `<instance.apps>/*/experiments`): a
+  unique name across applications; `namespace` is `<app>-<env>` of an existing
   application and environment; `fault` is a list, durations parse; every expected alert (`fire`, `quiet`, `may_fire`)
   with an `slo` label names a declared SLO (`<app>-<slo name>`) of the application the namespace belongs to and an
   environment the SLO is rendered in. An experiment whose SLO was renamed or removed fails here, not in the lab at 9:00.
@@ -88,14 +97,21 @@ once per cluster with `cluster: <name>` added. An annotated example: [platform.e
 | `product.version` | — (required) | Git ref (tag or branch) of the product every cluster runs. Upgrade = change it |
 | `instance.repo` | — (required) | Git URL of the instance repository (this file, `apps/`) |
 | `instance.revision` | `main` | Git ref of the instance repository Argo CD follows |
+| `instance.apps` | `apps` | Directory of the applications, `<apps>/<app>/app.yaml`; `.` = the repository root. Relative, no `..` |
 | `timezone` | `Etc/UTC` | IANA name: the daily regression's CronJob `timeZone`, the synthetic users' day (below) |
 | `language` | `en` | `en`, `zh`, `ja`: notification texts (`notify.language` overrides it) |
 | `clusters.<name>.role` | — (required) | `prod`: notifies, never runs experiments. `lab`: fault experiments and the daily regression; notifies nobody |
 | `clusters.<name>.runtime` | `generic` | `kind`, `k3s`, `generic`: Chaos Mesh's container runtime socket (`/run/k3s/containerd/containerd.sock` on k3s, `/run/containerd/containerd.sock` otherwise) |
 | `clusters.<name>.objectStorage` | `none` | `in-cluster`: an S3-compatible store (SeaweedFS) for database backups |
+| `clusters.<name>.extras` | `[]` | Your own components on that cluster: `[{ name, path }]`, [below](#extras) |
 | `optional.policies` | `false` | Kyverno and the workload baseline (admission policies in application namespaces) |
+| `applications.namespaceLabels` | `{}` | Labels of every application namespace `<app>-<env>` (app.yaml `namespace.labels` is merged over them) |
+| `applications.namespaceAnnotations` | `{}` | Annotations of every application namespace (app.yaml `namespace.annotations` is merged over them) |
+| `components.<component>.enabled` | `true` | `false`: the platform component is not installed ([Components](#components)) |
+| `components.<component>.values` | — | Helm-sourced components only: deep-merged into its Helm values |
 | `grafana.adminSecret` | `grafana-admin` | Secret in `monitoring` with keys `admin-user`, `admin-password`; bootstrap creates it |
 | `regression.schedule` | `0 9 * * *` | Cron schedule of the daily experiment regression on lab clusters, in `timezone` |
+| `regression.experiments` | `<instance.apps>/*/experiments` | Experiment directories (a glob or a list of globs, relative to the instance root): the daily regression runs their `*.yaml`, `check` checks them |
 | `traffic.dayMinutes` | `1440` | Length of the synthetic users' day in minutes (1..1440); less compresses it (60: a day per hour, for tests) |
 | `notify` | `{}` | Who hears what on prod clusters: [below](#notify) |
 
@@ -110,6 +126,120 @@ an hour in summer (the lunch peak at 13:00 local instead of 12:00).
 only for lab clusters, and it additionally refuses to run unless every node carries the label
 `slo-platform/lab=true` (bootstrap labels kind nodes; on other lab clusters label them yourself:
 `kubectl label nodes --all slo-platform/lab=true`).
+
+**Namespace metadata.** Argo CD creates each application namespace `<app>-<env>` with the labels and annotations of
+`applications.namespaceLabels` / `namespaceAnnotations`, then app.yaml's `namespace.labels` / `namespace.annotations`
+over them ([app.yaml](app-yaml.md#namespace)), then the platform's own over both: `slo-platform/app`,
+`slo-platform/env`, `slo-platform/image-signatures` (app.yaml `signedImages: true`) and `chaos-mesh.org/inject:
+enabled`. `check` rejects those keys in your maps. Use them for admission policies or pull-secret replication of your
+own that select namespaces by label.
+
+### extras
+
+`clusters.<name>.extras` brings your own components to one cluster without forking the platform: each entry
+`{ name, path }` becomes an Argo CD Application **`extras-<name>`** in `argocd`, whose source is the instance repository
+at `instance.revision`, path `<path>`: a kustomize directory (with a `kustomization.yaml`) or a directory of plain
+manifests (not recursive). Typically the directory holds Argo CD Applications (your UIs, backups, extra probes), which
+then manage their own destinations. Synced automatically with prune and self-heal: removing a file there removes what it
+made.
+
+```yaml
+clusters:
+  home:
+    role: prod
+    extras:
+      - { name: home, path: clusters/home }     # clusters/home/kustomization.yaml → Applications of your own
+```
+
+Names: DNS labels, unique per cluster (at most 46 characters). `path`: relative, no `..`; `check` requires it to exist.
+
+## Components
+
+The platform components the root chart installs, each an Argo CD Application `platform-<component>`:
+
+| `components.<…>` | Source | Installed |
+|---|---|---|
+| `monitoring` | Helm: kube-prometheus-stack | every cluster |
+| `blackbox` | Helm: prometheus-blackbox-exporter | every cluster |
+| `chaos-mesh` | Helm: chaos-mesh | every cluster |
+| `experiments` | Helm: this product's `platform/experiments` | lab clusters |
+| `pyrra` | kustomize | every cluster |
+| `cert-manager` | kustomize | every cluster |
+| `argo-rollouts` | kustomize | every cluster |
+| `cnpg` | kustomize | every cluster |
+| `kyverno`, `policies` | kustomize | with `optional.policies: true` |
+| `object-storage` | kustomize | clusters with `objectStorage: in-cluster` |
+
+- `enabled: false` drops the component (its Application; Argo CD prunes what it installed). `enabled: true` is the
+  default and does not override the condition in the last column. What depends on a dropped component is yours to
+  provide: Pyrra and the SLOs need the monitoring stack's CRDs, cnpg and chaos-mesh need cert-manager, the canary
+  examples need Argo Rollouts.
+- `values` (Helm-sourced components only) are **deep-merged** into the component's Helm values as the platform sets
+  them (the templates of `platform/root/templates/platform-<component>.yaml`): maps merge key by key; lists, strings,
+  numbers, booleans and `null` replace what is there (`false` is a value, not "unset"; `null` removes the key, as in
+  any Helm values file). The kustomize-sourced components take no `values`: `check` (and Helm) reject them; drop the
+  component and bring your own through [extras](#extras) instead.
+
+```yaml
+components:
+  monitoring:
+    values:
+      prometheus:
+        prometheusSpec:
+          retentionSize: 12GB
+          storageSpec:     # maps merge: the platform's accessModes stay, only the size changes
+            volumeClaimTemplate:
+              spec: { resources: { requests: { storage: 15Gi } } }
+      grafana:
+        additionalDataSources:
+          - { name: Prometheus · lab, uid: lab-prometheus, type: prometheus, access: proxy, url: "http://lab.example:30087" }
+  cnpg: { enabled: false }          # no databases here
+```
+
+Merging over the monitoring stack's Alertmanager `config` replaces parts of the platform's routing ([notify](#notify)
+builds it): prefer `notify`.
+
+## An existing repository
+
+A GitOps repository that already holds applications (one directory per application with an `app.yaml`, experiments,
+Argo CD Applications of your own per cluster) becomes an instance without moving anything: add a `platform.yaml` at its
+root that says where things are.
+
+```yaml
+apiVersion: slo-platform/v1
+product: { repo: https://github.com/MIERAI/slo-platform.git, version: v0.2.0 }
+instance: { repo: https://github.com/your-org/gitops-manifests.git, revision: main, apps: "." }   # <app>/app.yaml at the root
+clusters:
+  home:
+    role: prod
+    runtime: k3s
+    extras: [{ name: home, path: clusters/home }]   # your own Applications on this cluster
+  lab:
+    role: lab
+    runtime: k3s
+    extras: [{ name: lab, path: clusters/lab }]
+applications:
+  namespaceLabels: { example.com/policies: enforced }   # what your own admission policies select on
+components:
+  monitoring: { values: { prometheus: { prometheusSpec: { retentionSize: 12GB } } } }
+regression:
+  experiments: experiments          # experiments/*.yaml instead of <app>/experiments/
+```
+
+Then:
+
+1. `slo-platform check .` from a checkout of the product: every `app.yaml` found, every experiment's namespace and SLOs
+   resolved, every extras path present.
+2. Move what the platform now installs out of your own tree: the Argo CD Applications for its components (monitoring,
+   Pyrra, Chaos Mesh, …) and the ApplicationSet that turned `app.yaml` files into Applications. Keep what is yours in
+   the `extras` directories (they must no longer include those). A component you customise beyond `values` (a
+   different kustomize path, patches): `enabled: false`, and its Application of yours in `extras`.
+3. Per-application namespace labels (e.g. one that requires signed images only where `signedImages: true`) go into
+   that `app.yaml` as `namespace.labels` ([app.yaml](app-yaml.md#namespace)).
+4. Bootstrap each cluster (`bootstrap/`): its root Application renders `platform/root` with this file.
+
+`scripts/render.py --instance . --cluster <name> all <dir>` renders what Argo CD will render, to compare with what the
+cluster runs before switching.
 
 ## notify
 

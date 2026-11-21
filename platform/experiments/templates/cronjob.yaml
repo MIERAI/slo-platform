@@ -1,14 +1,17 @@
 # The scheduled regression (scripts/experiment-regression.py): every experiment of the instance, daily, in waves (one
 # queue per namespace). Nothing is baked into an image: the job clones the product (the scripts) at product.version
-# and the instance (apps/*/experiments) at instance.revision when it starts — the same revisions Argo CD syncs. Image:
-# alpine/k8s (kubectl, python3 + PyYAML, git in one pinned upstream image; ~1 GB, pulled once per node).
+# and the instance (its experiment directories: `experiments`) at instance.revision when it starts — the same
+# revisions Argo CD syncs. Image: alpine/k8s (kubectl, python3 + PyYAML, git in one pinned upstream image; ~1 GB, pulled once per node).
 # Private repositories: the optional Secret git-credentials (key token) is sent as x-access-token on both clones.
 # A full run takes hours (experiments of one namespace run one after another, with a cooldown between them). A lab
 # that sleeps at the scheduled time (a laptop running kind) runs it when it wakes (startingDeadlineSeconds), or the run
 # is missed and SLOExperimentRegressionStale says so after 2 days.
 # The lab guard is the runner's: it exits before any fault unless every node is labelled slo-platform/lab=true.
 # By hand: kubectl -n slo-experiments create job --from=cronjob/experiment-regression regression-$(date +%s)
-{{- if not .Values.instance.repo }}{{ fail "instance.repo: required (the repository with apps/*/experiments)" }}{{ end }}
+{{- if not .Values.instance.repo }}{{ fail "instance.repo: required (the repository with the experiments)" }}{{ end }}
+{{- range .Values.experiments }}
+{{- if or (hasPrefix "/" .) (contains ".." .) (contains "'" .) }}{{ fail (printf "experiments: %q must be a relative path in the instance" .) }}{{ end }}
+{{- end }}
 apiVersion: batch/v1
 kind: CronJob
 metadata: { name: experiment-regression, namespace: slo-experiments }
@@ -49,8 +52,9 @@ spec:
                   clone "$PRODUCT_REPO" "$PRODUCT_VERSION" /tmp/product
                   clone "$INSTANCE_REPO" "$INSTANCE_REVISION" /tmp/instance
                   cd /tmp/product
-                  exec python3 -I -B scripts/experiment-regression.py --record slo-experiments/experiment-results \
-                    '/tmp/instance/apps/*/experiments'
+                  # the experiment directories (globs: the script expands them)
+                  exec python3 -I -B scripts/experiment-regression.py --record slo-experiments/experiment-results
+                  {{- range .Values.experiments }} '/tmp/instance/{{ . }}'{{ end }}
               env:
                 - { name: PRODUCT_REPO, value: {{ .Values.product.repo | quote }} }
                 - { name: PRODUCT_VERSION, value: {{ .Values.product.version | toString | quote }} }

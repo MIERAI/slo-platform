@@ -1,8 +1,7 @@
-{{- $c := include "root.cluster" . | fromJson }}
-{{- $am := include "root.alertmanager" . | fromJson }}
 # Prometheus + Alertmanager + Grafana (kube-prometheus-stack, pinned chart). fullnameOverride kps: other components
 # address kps-prometheus / kps-alertmanager by name (Pyrra's API, the experiment runner).
 # Apps bring their own PodMonitor / PrometheusRule / dashboard ConfigMap; this only runs the stack.
+{{- if include "root.enabled" (list . "monitoring") }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -17,86 +16,7 @@ spec:
     targetRevision: 92.17.0   # Alertmanager v0.34.2: amtool (scripts/install-tools.sh) and scripts/notify-delivery.sh follow it
     helm:
       valuesObject:
-        fullnameOverride: kps
-        # kind and k3s: the control-plane components are not reachable from inside the cluster → no scraping, no
-        # false alerts
-        kubeEtcd: { enabled: false }
-        kubeControllerManager: { enabled: false }
-        kubeScheduler: { enabled: false }
-        kubeProxy: { enabled: false }
-        defaultRules:
-          rules: { etcd: false, kubeControllerManager: false, kubeSchedulerAlerting: false, kubeSchedulerRecording: false, kubeProxy: false }
-        prometheus:
-          prometheusSpec:
-            # pick up every PodMonitor / ServiceMonitor / PrometheusRule / Probe in the cluster (apps ship their own)
-            serviceMonitorSelectorNilUsesHelmValues: false
-            podMonitorSelectorNilUsesHelmValues: false
-            ruleSelectorNilUsesHelmValues: false
-            probeSelectorNilUsesHelmValues: false   # the probe SLOs (platform/slo → Probe)
-            # SLOs use 28-day windows: keep 30 days, on a volume — with 3 days in an emptyDir the "28-day" budgets
-            # were computed from 3 days and every restart started every SLO from nothing again.
-            retention: 30d
-            retentionSize: 8GB     # below the volume: Prometheus drops old blocks before the disk fills
-            storageSpec:
-              volumeClaimTemplate:
-                spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 10Gi } } }
-            scrapeInterval: 15s
-            evaluationInterval: 15s
-            resources: { requests: { cpu: 100m, memory: 512Mi }, limits: { memory: 1536Mi } }
-        # Series no rule, alert or SLO uses (~half of all series on k3s), so 30 days fit:
-        kubeApiServer:
-          serviceMonitor:
-            metricRelabelings:
-              - action: drop   # the chart's default
-                regex: (etcd_request|apiserver_request_slo|apiserver_request_sli|apiserver_request)_duration_seconds_bucket;(0\.15|0\.2|0\.3|0\.35|0\.4|0\.45|0\.6|0\.7|0\.8|0\.9|1\.25|1\.5|1\.75|2|3|3\.5|4|4\.5|6|7|8|9|15|20|40|45|50)(\.0)?
-                sourceLabels: [__name__, le]
-              - action: drop   # size / watch histograms
-                regex: apiserver_(request_body_size_bytes|response_sizes|watch_events_sizes|watch_list_duration_seconds|watch_cache_read_wait_seconds)_bucket
-                sourceLabels: [__name__]
-        kubelet:
-          serviceMonitor:
-            metricRelabelings:
-              - action: drop   # the chart's default
-                sourceLabels: [__name__, le]
-                regex: (csi_operations|storage_operation_duration)_seconds_bucket;(0.25|2.5|15|25|120|600)(\.0)?
-              # k3s runs the API server in the kubelet's process: its /metrics repeats what job apiserver already has
-              # (~68k series on a small k3s node). A real kubelet (kind) exposes none of these.
-              - action: drop
-                sourceLabels: [__name__]
-                regex: (apiserver|etcd|aggregator|apiextensions|authentication|authorization|watch_cache|field_validation)_.+
-        alertmanager:
-          alertmanagerSpec:
-            resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 128Mi } }
-            {{- if $am.secret }}
-            # the receivers' secrets (bootstrap: the secrets file's notify:), as files under
-            # /etc/alertmanager/secrets/alertmanager-notify/
-            secrets: [alertmanager-notify]
-            {{- end }}
-          # The default routing policy (docs/concepts.md) and the receivers of platform.yaml `notify` (templates/_notify.tpl).
-          # A lab cluster (role lab) notifies nobody: its alerts are the experiments' subject, seen in Alertmanager.
-          config:
-            {{- toYaml $am.config | nindent 12 }}
-          {{- if $am.templates }}
-          # the notification texts (files/notify/: common.tmpl + the language's words)
-          templateFiles:
-            slo-platform.tmpl: {{ $am.templates | toYaml | indent 12 | trim }}
-          {{- end }}
-        grafana:
-          # The admin credentials come from a Secret (platform.yaml grafana.adminSecret, keys admin-user and
-          # admin-password; bootstrap creates it): no password in git, and none the chart would re-roll on every render
-          # (Argo CD renders without lookup; the checksum would restart Grafana in a loop). Grafana is a ClusterIP
-          # Service: kubectl -n monitoring port-forward svc/kps-grafana 3000:80.
-          admin: { existingSecret: {{ .Values.grafana.adminSecret | quote }}, userKey: admin-user, passwordKey: admin-password }
-          sidecar:
-            dashboards: { enabled: true, label: grafana_dashboard, searchNamespace: ALL }
-          resources: { requests: { cpu: 50m, memory: 192Mi }, limits: { memory: 512Mi } }
-          # Grafana needs more than the default 60s to start on a small node: the liveness probe killed it in a loop
-          # (exit 137)
-          livenessProbe: { httpGet: { path: /api/health, port: 3000 }, initialDelaySeconds: 180, timeoutSeconds: 30, failureThreshold: 10 }
-        kube-state-metrics:
-          resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 128Mi } }
-        prometheus-node-exporter:
-          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 64Mi } }
+        {{- include "root.helmValues" (list . "monitoring" (include "root.monitoring.values" .)) | nindent 8 }}
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
@@ -104,3 +24,87 @@ spec:
     automated: { prune: true, selfHeal: true }
     syncOptions: [CreateNamespace=true, ServerSideApply=true]
     retry: { limit: 5, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }
+{{- end }}
+{{- define "root.monitoring.values" }}
+{{- $am := include "root.alertmanager" . | fromJson }}
+fullnameOverride: kps
+# kind and k3s: the control-plane components are not reachable from inside the cluster → no scraping, no
+# false alerts
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+defaultRules:
+  rules: { etcd: false, kubeControllerManager: false, kubeSchedulerAlerting: false, kubeSchedulerRecording: false, kubeProxy: false }
+prometheus:
+  prometheusSpec:
+    # pick up every PodMonitor / ServiceMonitor / PrometheusRule / Probe in the cluster (apps ship their own)
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false   # the probe SLOs (platform/slo → Probe)
+    # SLOs use 28-day windows: keep 30 days, on a volume — with 3 days in an emptyDir the "28-day" budgets
+    # were computed from 3 days and every restart started every SLO from nothing again.
+    retention: 30d
+    retentionSize: 8GB     # below the volume: Prometheus drops old blocks before the disk fills
+    storageSpec:
+      volumeClaimTemplate:
+        spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 10Gi } } }
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    resources: { requests: { cpu: 100m, memory: 512Mi }, limits: { memory: 1536Mi } }
+# Series no rule, alert or SLO uses (~half of all series on k3s), so 30 days fit:
+kubeApiServer:
+  serviceMonitor:
+    metricRelabelings:
+      - action: drop   # the chart's default
+        regex: (etcd_request|apiserver_request_slo|apiserver_request_sli|apiserver_request)_duration_seconds_bucket;(0\.15|0\.2|0\.3|0\.35|0\.4|0\.45|0\.6|0\.7|0\.8|0\.9|1\.25|1\.5|1\.75|2|3|3\.5|4|4\.5|6|7|8|9|15|20|40|45|50)(\.0)?
+        sourceLabels: [__name__, le]
+      - action: drop   # size / watch histograms
+        regex: apiserver_(request_body_size_bytes|response_sizes|watch_events_sizes|watch_list_duration_seconds|watch_cache_read_wait_seconds)_bucket
+        sourceLabels: [__name__]
+kubelet:
+  serviceMonitor:
+    metricRelabelings:
+      - action: drop   # the chart's default
+        sourceLabels: [__name__, le]
+        regex: (csi_operations|storage_operation_duration)_seconds_bucket;(0.25|2.5|15|25|120|600)(\.0)?
+      # k3s runs the API server in the kubelet's process: its /metrics repeats what job apiserver already has
+      # (~68k series on a small k3s node). A real kubelet (kind) exposes none of these.
+      - action: drop
+        sourceLabels: [__name__]
+        regex: (apiserver|etcd|aggregator|apiextensions|authentication|authorization|watch_cache|field_validation)_.+
+alertmanager:
+  alertmanagerSpec:
+    resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 128Mi } }
+    {{- if $am.secret }}
+    # the receivers' secrets (bootstrap: the secrets file's notify:), as files under
+    # /etc/alertmanager/secrets/alertmanager-notify/
+    secrets: [alertmanager-notify]
+    {{- end }}
+  # The default routing policy (docs/concepts.md) and the receivers of platform.yaml `notify` (templates/_notify.tpl).
+  # A lab cluster (role lab) notifies nobody: its alerts are the experiments' subject, seen in Alertmanager.
+  config:
+    {{- toYaml $am.config | nindent 4 }}
+  {{- if $am.templates }}
+  # the notification texts (files/notify/: common.tmpl + the language's words)
+  templateFiles:
+    slo-platform.tmpl: {{ $am.templates | toYaml | indent 4 | trim }}
+  {{- end }}
+grafana:
+  # The admin credentials come from a Secret (platform.yaml grafana.adminSecret, keys admin-user and
+  # admin-password; bootstrap creates it): no password in git, and none the chart would re-roll on every render
+  # (Argo CD renders without lookup; the checksum would restart Grafana in a loop). Grafana is a ClusterIP
+  # Service: kubectl -n monitoring port-forward svc/kps-grafana 3000:80.
+  admin: { existingSecret: {{ .Values.grafana.adminSecret | quote }}, userKey: admin-user, passwordKey: admin-password }
+  sidecar:
+    dashboards: { enabled: true, label: grafana_dashboard, searchNamespace: ALL }
+  resources: { requests: { cpu: 50m, memory: 192Mi }, limits: { memory: 512Mi } }
+  # Grafana needs more than the default 60s to start on a small node: the liveness probe killed it in a loop
+  # (exit 137)
+  livenessProbe: { httpGet: { path: /api/health, port: 3000 }, initialDelaySeconds: 180, timeoutSeconds: 30, failureThreshold: 10 }
+kube-state-metrics:
+  resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 128Mi } }
+prometheus-node-exporter:
+  resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 64Mi } }
+{{- end }}

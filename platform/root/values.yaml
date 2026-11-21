@@ -2,13 +2,15 @@
 # docs/configuration.md) plus `cluster`, which the root Application passes as a Helm parameter. The defaults:
 apiVersion: slo-platform/v1
 product: { repo: https://github.com/MIERAI/slo-platform.git, version: main }   # the platform, at a git ref
-instance: { repo: "", revision: main }   # the instance repository (platform.yaml, apps/): required
+instance: { repo: "", revision: main, apps: apps }   # the instance repository (platform.yaml, <apps>/<app>/app.yaml): repo required
 timezone: Etc/UTC                        # IANA name (files/timezones.yaml)
 language: en
-clusters: {}                             # <name>: { role: prod | lab, runtime: generic, objectStorage: none }
+clusters: {}                             # <name>: { role: prod | lab, runtime: generic, objectStorage: none, extras: [] }
 optional: { policies: false }
+applications: { namespaceLabels: {}, namespaceAnnotations: {} }
+components: {}                           # <component>: { enabled: true, values: {} }
 grafana: { adminSecret: grafana-admin }
-regression: { schedule: "0 9 * * *" }
+regression: { schedule: "0 9 * * *" }    # experiments: default <instance.apps>/*/experiments
 traffic: { dayMinutes: 1440 }
 notify: {}
 cluster: ""                              # which of `clusters` this rendering is for (required)

@@ -1,0 +1,43 @@
+# An existing GitOps repository made an instance without moving its applications (docs/configuration.md#an-existing-
+# repository): applications at the repository root, experiments in one directory, the owner's own components per
+# cluster (extras), platform components tuned or dropped, namespace labels for the owner's own admission policies.
+# scripts/validate.sh renders it per cluster and the instance render.py assembles from examples/ in this layout (plus
+# the files of ci/existing-repo/: the extras).
+apiVersion: slo-platform/v1
+product: { repo: https://github.com/MIERAI/slo-platform.git, version: main }
+instance: { repo: https://github.com/your-org/gitops-manifests.git, revision: main, apps: "." }
+timezone: Asia/Tokyo
+clusters:
+  laptop:
+    role: prod
+    runtime: k3s
+    extras:
+      - { name: laptop, path: clusters/laptop }       # a kustomize directory
+  lab:
+    role: lab
+    runtime: k3s
+    extras:
+      - { name: lab, path: clusters/lab }             # plain manifests
+optional: { policies: true }
+applications:
+  namespaceLabels: { example.com/policies: enforced, example.com/ghcr-pull: "true" }
+  namespaceAnnotations: { owner.example.com/team: platform }
+components:
+  monitoring:
+    values:
+      prometheus:
+        prometheusSpec:
+          retentionSize: 12GB
+          storageSpec:
+            volumeClaimTemplate:
+              spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 15Gi } } }
+      grafana:
+        additionalDataSources:
+          - { name: "Prometheus · lab", uid: lab-prometheus, type: prometheus, access: proxy, url: "http://lab.example:30087" }
+  blackbox: { values: { resources: { limits: { memory: 96Mi } } } }
+  kyverno: { enabled: false }       # own policies elsewhere
+  policies: { enabled: false }
+  cnpg: { enabled: true }
+regression:
+  schedule: "30 3 * * *"
+  experiments: experiments

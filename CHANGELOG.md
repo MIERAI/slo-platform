@@ -5,6 +5,15 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- An existing GitOps repository as an instance (P5), all optional with today's behaviour as the default:
+  `instance.apps` (where `<app>/app.yaml` directories live; `.` = the repository root), `regression.experiments`
+  (experiment directories of the daily regression and `check`), `clusters.<name>.extras` (Applications `extras-<name>`
+  from the instance repository: your own components per cluster), `components.<component>` (`enabled: false` drops a
+  platform component; `values` deep-merged into the Helm-sourced ones: maps merge, lists replace),
+  `applications.namespaceLabels` / `namespaceAnnotations` and app.yaml `namespace: { labels, annotations }` (the
+  platform's own labels and the chaos annotation always win). `check`, `scripts/render.py` (plain-manifest
+  directories too) and `scripts/appdesc.py` follow them; CI renders `platform/root/ci/existing-repo.yaml` and the
+  examples laid out that way.
 - `docs/quickstart.md` (P4): from nothing to the first passing experiment on kind, with troubleshooting;
   `docs/runbook.md`: what to do per alert (ErrorBudgetBurn per SLI type, SLOMetricAbsent, the regression's tickets).
 - `scripts/e2e.sh`: the template instantiated end to end on a throwaway kind cluster without GitHub (an in-cluster git

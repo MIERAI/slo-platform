@@ -4,9 +4,10 @@ timeZone: Etc/UTC           # timezone (IANA)
 product:                    # the scripts: scripts/experiment-regression.py at this ref
   repo: https://github.com/MIERAI/slo-platform.git
   version: main
-instance:                   # the experiments: apps/*/experiments at this ref (required)
+instance:                   # the experiments (below) at this ref (required)
   repo: ""
   revision: main
+experiments: ["apps/*/experiments"]   # regression.experiments: directories (globs) of the instance, relative to its root
 # Private repositories: the optional Secret slo-experiments/git-credentials (key token, sent as x-access-token;
 # created by bootstrap when a git token is given) authenticates both clones.
 gitCredentialsSecret: git-credentials
