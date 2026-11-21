@@ -4,3 +4,5 @@
 .terraform/
 __pycache__/
 *.decrypted.*
+e2e-diagnostics/
+results/

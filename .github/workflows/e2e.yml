@@ -1,0 +1,49 @@
+# The template instantiated end to end on kind (scripts/e2e.sh): init → in-cluster git server → bootstrap/tofu/kind →
+# every Application Synced + Healthy; with the sample-app-down fault experiment on release tags and on request.
+# sample-app only: private repositories run on 2 vCPU / 7 GB runners.
+name: e2e
+on:
+  workflow_dispatch:
+    inputs:
+      experiment:
+        description: also run the sample-app-down experiment (must PASS; ~20 min more)
+        type: boolean
+        default: true
+  schedule:
+    - cron: "17 4 * * 1"           # weekly, Monday 04:17 UTC: the platform still installs from scratch
+  push:
+    tags: ["v*"]
+  pull_request:                    # changes to the e2e itself
+    paths: [scripts/e2e.sh, scripts/e2e/**, .github/workflows/e2e.yml]
+permissions: { contents: read }
+concurrency: { group: "e2e-${{ github.ref }}", cancel-in-progress: true }
+env:
+  TOFU_VERSION: 1.13.9
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with: { tofu_version: "${{ env.TOFU_VERSION }}", tofu_wrapper: false }
+      - name: Tools
+        run: |
+          python3 -c "import yaml" 2>/dev/null || sudo apt-get install -y -qq python3-yaml
+          kind version; kubectl version --client; docker info --format '{{.NCPU}} CPUs, {{.MemTotal}} bytes'
+      - name: scripts/e2e.sh
+        env:
+          E2E_DIAG: ${{ runner.temp }}/e2e-diagnostics
+          EXPERIMENT: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.experiment) }}
+        run: |
+          args=(--timeout 40 --results "$RUNNER_TEMP/e2e-results")
+          if [ "$EXPERIMENT" = true ]; then args+=(--experiment); fi
+          scripts/e2e.sh "${args[@]}"
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: e2e-diagnostics, path: "${{ runner.temp }}/e2e-diagnostics", if-no-files-found: ignore }
+      - name: Upload experiment report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: e2e-experiment-report, path: "${{ runner.temp }}/e2e-results", if-no-files-found: ignore }
