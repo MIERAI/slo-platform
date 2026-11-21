@@ -1,0 +1,4 @@
+apiVersion: v2
+name: traffic
+description: Synthetic users (k6, open loop, day-shaped) for one application in one environment, from app.yaml traffic
+version: 0.1.0

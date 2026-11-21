@@ -1,0 +1,12 @@
+# Optional admission baseline (Kyverno, CEL) for every application namespace: namespaces with the label
+# slo-platform/app (set by apps/applicationset.yaml). Platform namespaces (upstream manifests) are not matched.
+# Rules are written against Pods; Kyverno autogen applies them to the controllers too, so a violating Deployment is
+# rejected at sync time (Argo CD shows the message) instead of failing later when its Pods are created.
+# Rollout on an existing cluster: Audit first (PolicyReports, `kubectl get policyreports -A`), fix, then Deny.
+# scripts/validate.sh runs the policies' own tests and applies them to every rendered application.
+# Image signatures (app.yaml signedImages → label slo-platform/image-signatures=required) come later, with a
+# configurable signer.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - workload-baseline.yaml

@@ -1,0 +1,7 @@
+# SeaweedFS as a local S3 endpoint (http://seaweedfs.object-storage:8333, bucket "cnpg").
+# Credentials: Secret seaweedfs-s3 with key s3.json (SeaweedFS S3 identities; platform/README.md), created before
+# the first sync. On a cloud, a bucket of the provider is the better home for backups.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: object-storage
+resources: [seaweedfs.yaml]

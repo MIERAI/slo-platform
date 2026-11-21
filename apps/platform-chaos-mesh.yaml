@@ -1,0 +1,48 @@
+# Fault injection for the SLO experiments: Chaos Mesh, pinned chart. Only namespaces annotated
+# chaos-mesh.org/inject=enabled can be targeted (enableFilterNamespace): the application namespaces (set by
+# apps/applicationset.yaml), never the platform's. Faults only on lab clusters (docs/concepts.md).
+# After a certificate change restart chaos-daemon by hand (rollme is ignored, so nothing restarts it): a daemon with
+# the old certificate fails every injection with "certificate signed by unknown authority".
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-chaos-mesh
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://charts.chaos-mesh.org
+    chart: chaos-mesh
+    targetRevision: 2.8.8
+    helm:
+      valuesObject:
+        # The chart renders differently each time (self-signed certificates, a random "rollme" pod annotation):
+        # Argo CD would re-sync and restart it forever. Certificates from cert-manager (platform-cert-manager), no
+        # chaosd mTLS (chaosd = physical machines, unused), rollme ignored below.
+        webhook: { certManager: { enabled: true } }
+        controllerManager:
+          chaosdSecurityMode: false
+          replicaCount: 1
+          # pod-failure swaps the containers' image for this one: the default (pause:latest) is denied by the
+          # admission policy disallow-latest-tag (optional platform/policies) in the application namespaces
+          podChaos: { podFailure: { pauseImage: registry.k8s.io/pause:3.10 } }
+          enableFilterNamespace: true
+          resources: { requests: { cpu: 25m, memory: 128Mi }, limits: { memory: 384Mi } }
+        chaosDaemon:
+          runtime: containerd
+          # containerd's default socket (kind, most distributions). k3s keeps its own containerd elsewhere: override
+          # with /run/k3s/containerd/containerd.sock (platform/README.md), or every injection fails to find the pod.
+          socketPath: /run/containerd/containerd.sock
+          resources: { requests: { cpu: 10m, memory: 64Mi }, limits: { memory: 256Mi } }
+        dashboard: { create: false }    # experiments are files (examples/<app>/experiments), run by scripts/experiment.py
+        dnsServer: { create: false }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: chaos-mesh
+  ignoreDifferences:
+    - { group: apps, kind: Deployment, jqPathExpressions: ['.spec.template.metadata.annotations.rollme'] }
+    - { group: apps, kind: DaemonSet, jqPathExpressions: ['.spec.template.metadata.annotations.rollme'] }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true, RespectIgnoreDifferences=true]
+    retry: { limit: 5, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }

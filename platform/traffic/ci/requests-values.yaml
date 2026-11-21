@@ -1,0 +1,10 @@
+# Render test (scripts/validate.sh, also run through `k6 inspect`): every request option, without any application.
+app: demo
+env: dev
+scale: 0.3
+peakRpm: 300
+requests:
+  - { weight: 65, method: GET, service: web, port: 8080, path: "/" }
+  - { weight: 7, method: POST, service: web, port: 8080, path: /orders, body: '{"amount": 100}', badBody: '{"amount": 0}', badRate: 0.05 }
+  - { weight: 30, method: GET, service: hello, port: 8080, path: "/hello?name=user{rand}" }
+  - { weight: 3, method: get, service: web, port: 8080, path: /products/old-link }

@@ -1,0 +1,34 @@
+{{- /*
+What the fault-experiment runner (ServiceAccount experiment-runner in slo-experiments, platform/experiments) may do in
+this namespace — rendered here, per application × environment, so that no platform file lists namespaces:
+  Chaos Mesh PodChaos / NetworkChaos     the faults (Chaos Mesh only injects into namespaces annotated
+                                          chaos-mesh.org/inject=enabled, which apps/applicationset.yaml sets)
+  Jobs                                    an experiment's `load` (what the fault needs to matter, e.g. writes)
+  ConfigMap <app>-faults                  the application's own fault switch, by convention (docs/app-yaml.md);
+                                          create cannot be limited to a name (RBAC): any new ConfigMap
+*/}}
+{{- with .Values.experimentRunner }}
+{{- if .enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: experiment-runner
+  namespace: {{ $.Release.Namespace }}
+rules:
+  - { apiGroups: [chaos-mesh.org], resources: [podchaos, networkchaos], verbs: [get, create, patch, delete] }
+  - { apiGroups: [batch], resources: [jobs], verbs: [get, create, patch, delete] }
+  - { apiGroups: [""], resources: [configmaps], verbs: [create] }
+  - { apiGroups: [""], resources: [configmaps], verbs: [get, patch, delete], resourceNames: [{{ printf "%s-faults" $.Values.app | quote }}] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: experiment-runner
+  namespace: {{ $.Release.Namespace }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: experiment-runner }
+subjects:
+  - kind: ServiceAccount
+    name: {{ .serviceAccount }}
+    namespace: {{ .namespace }}
+{{- end }}
+{{- end }}

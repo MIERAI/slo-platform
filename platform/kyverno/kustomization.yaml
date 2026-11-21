@@ -1,0 +1,29 @@
+# Kyverno, pinned upstream release. Policies use the CEL-based policies.kyverno.io/v1 types
+# (ValidatingPolicy / ImageValidatingPolicy): the legacy kyverno.io ClusterPolicy is deprecated.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/kyverno/kyverno/releases/download/v1.19.2/install.yaml
+# PolicyExceptions are off upstream. Enable them, but only from the kyverno namespace (platform-owned, reviewed via
+# this repository): an application cannot exempt itself. The `test` ops make an upgrade that moves the flag fail loudly.
+patches:
+  - target: { kind: Deployment, name: kyverno-admission-controller }
+    patch: |-
+      - { op: test, path: /spec/template/spec/containers/0/args/30, value: --enablePolicyException=false }
+      - { op: replace, path: /spec/template/spec/containers/0/args/30, value: --enablePolicyException=true }
+      - { op: add, path: /spec/template/spec/containers/0/args/-, value: --exceptionNamespace=kyverno }
+  - target: { kind: Deployment, name: kyverno-background-controller }
+    patch: |-
+      - { op: test, path: /spec/template/spec/containers/0/args/13, value: --enablePolicyException=false }
+      - { op: replace, path: /spec/template/spec/containers/0/args/13, value: --enablePolicyException=true }
+      - { op: add, path: /spec/template/spec/containers/0/args/-, value: --exceptionNamespace=kyverno }
+  - target: { kind: Deployment, name: kyverno-reports-controller }
+    patch: |-
+      - { op: test, path: /spec/template/spec/containers/0/args/22, value: --enablePolicyException=false }
+      - { op: replace, path: /spec/template/spec/containers/0/args/22, value: --enablePolicyException=true }
+      - { op: add, path: /spec/template/spec/containers/0/args/-, value: --exceptionNamespace=kyverno }
+  # The policies.kyverno.io CRDs ship with an empty `labels: {}`; the API server drops empty maps, so Argo CD
+  # reported them OutOfSync forever. A real label makes desired and live state identical.
+  - target: { kind: CustomResourceDefinition, name: ".*\\.policies\\.kyverno\\.io" }
+    patch: |-
+      - { op: add, path: /metadata/labels/app.kubernetes.io~1part-of, value: kyverno }

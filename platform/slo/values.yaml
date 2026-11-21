@@ -1,0 +1,14 @@
+# Set by apps/applicationset.yaml from the application's app.yaml (reference: docs/app-yaml.md).
+app: ""            # application name
+env: ""            # environment; the namespace is the release namespace (<app>-<env>)
+slos: []
+# Alert layers (docs/concepts.md): fast / medium burn page, slow burn and a missing SLI are tickets.
+severities: { fastBurn: page, mediumBurn: page, slowBurn: ticket, longTermBurn: ticket, absent: ticket }
+prober: blackbox-exporter.monitoring.svc:9115   # platform-blackbox (probe SLOs)
+runbook: https://github.com/MIERAI/slo-platform/blob/main/docs/runbook.md
+# The fault-experiment runner's rights in this namespace (templates/experiment-runner.yaml). Harmless where the
+# runner is not installed: the binding then names a ServiceAccount that does not exist.
+experimentRunner:
+  enabled: true
+  serviceAccount: experiment-runner
+  namespace: slo-experiments

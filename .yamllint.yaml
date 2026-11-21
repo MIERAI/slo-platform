@@ -2,3 +2,6 @@ extends: relaxed
 rules:
   line-length: { max: 160 }
   colons: { max-spaces-after: -1 }   # aligned values in examples
+# Helm templates are Go templates, not YAML
+ignore: |
+  templates/

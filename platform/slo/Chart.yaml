@@ -1,0 +1,4 @@
+apiVersion: v2
+name: slo
+description: An application's SLOs (app.yaml slos) as Pyrra ServiceLevelObjectives, scoped to one environment
+version: 0.1.0
