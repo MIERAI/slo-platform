@@ -38,6 +38,7 @@ components:
   kyverno: { enabled: false }       # own policies elsewhere
   policies: { enabled: false }
   cnpg: { enabled: true }
+  tracing: { enabled: true }        # opt-in: Tempo, and its Grafana datasource next to the one above
 regression:
   schedule: "30 3 * * *"
   experiments: experiments

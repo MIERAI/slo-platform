@@ -56,7 +56,7 @@ XGLOB = rf"^(\.|{GSEG}(/{GSEG})*)$"                    # regression.experiments:
 LABEL_KEY = r"^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$"
 LABEL_VALUE = r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$"
 # platform components (components.<name>): Helm-sourced ones take values, kustomize-sourced ones do not
-HELM_COMPONENTS = ("monitoring", "blackbox", "chaos-mesh", "experiments")
+HELM_COMPONENTS = ("monitoring", "blackbox", "chaos-mesh", "experiments", "tracing")
 KUSTOMIZE_COMPONENTS = ("pyrra", "cert-manager", "argo-rollouts", "cnpg", "kyverno", "policies", "object-storage")
 OWN_LABEL_PREFIX = "slo-platform/"                    # namespace metadata the platform sets (always wins)
 OWN_ANNOTATIONS = ("chaos-mesh.org/inject",)

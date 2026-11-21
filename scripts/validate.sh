@@ -106,6 +106,36 @@ helm template kps kube-prometheus-stack --repo https://prometheus-community.gith
 [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "✗ kube-prometheus-stack $kps changes the configuration"; exit 1; }
 echo "  kube-prometheus-stack $kps: the same configuration and texts"
 
+# The optional Tempo (platform-tracing) through its pinned chart with the values the root chart gives it: the chart
+# renders, the result passes kubeconform, and Tempo gets the retention and resources the platform means
+echo "• Tempo through its chart (platform/root/ci/existing-repo.yaml: tracing enabled)"
+helm template slo-platform platform/root --namespace argocd -f platform/root/ci/existing-repo.yaml --set cluster=laptop > "$tmp/root.yaml"
+src=$("$PY" -I - "$tmp/root.yaml" "$tmp/tempo-values.yaml" <<'PY'
+import sys, yaml
+app = next(d for d in yaml.safe_load_all(open(sys.argv[1])) if d and d["metadata"]["name"] == "platform-tracing")
+s = app["spec"]["source"]
+yaml.safe_dump(s["helm"]["valuesObject"], open(sys.argv[2], "w"))
+print(s["repoURL"], s["chart"], s["targetRevision"])
+PY
+)
+read -r repo chart version <<< "$src"
+helm template platform-tracing "$chart" --repo "$repo" --version "$version" --namespace tracing -f "$tmp/tempo-values.yaml" > "$tmp/tempo.yaml"
+kc < "$tmp/tempo.yaml"
+"$PY" -I - "$tmp/tempo.yaml" <<'PY'
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+conf = yaml.safe_load(next(d for d in docs if d["kind"] == "ConfigMap")["data"]["tempo.yaml"])
+assert conf["backend_worker"]["compaction"]["block_retention"] == "24h", conf
+assert conf["usage_report"]["reporting_enabled"] is False, conf
+assert conf["distributor"]["receivers"]["otlp"]["protocols"]["http"]["endpoint"].endswith(":4318"), conf
+svc = next(d for d in docs if d["kind"] == "Service" and d["metadata"]["name"] == "tempo")
+assert {4317, 4318, 3200} <= {p["port"] for p in svc["spec"]["ports"]}, svc
+sts = next(d for d in docs if d["kind"] == "StatefulSet")
+c = sts["spec"]["template"]["spec"]["containers"][0]
+assert c["resources"]["limits"]["memory"] == "256Mi", c["resources"]
+print("    %s: Service tempo (OTLP 4317/4318, query 3200), retention 24h, memory limit %s" % (c["image"], c["resources"]["limits"]["memory"]))
+PY
+
 echo "• instance assembled from examples/ (scripts/render.py)"
 : > "$tmp/apps"
 for pf in platform/root/ci/platform.yaml platform/root/ci/existing-repo.yaml; do
@@ -134,6 +164,25 @@ sys.exit(r.returncode)
 PY
 n=$(grep -c ' enforced$' "$tmp/apps" || true)
 [ "$n" -gt 0 ] || echo "  (no app.yaml: only the platform's Applications)"
+
+# storefront's opt-in tracing (examples/storefront/tracing, worker tracing.enabled): not in any overlay by default,
+# so rendered here on its own: dev with the Component, the worker with tracing on; every service gets the endpoint
+echo "• storefront with tracing on (examples/storefront/tracing, worker tracing.enabled)"
+mkdir -p "$tmp/sf/overlays/dev"
+cp -R examples/storefront/base examples/storefront/tracing "$tmp/sf/"
+{ cat examples/storefront/overlays/dev/kustomization.yaml; echo "components: [../../tracing]"; } > "$tmp/sf/overlays/dev/kustomization.yaml"
+{ kubectl kustomize "$tmp/sf/overlays/dev"; echo "---"
+  helm template storefront-worker examples/storefront/worker/chart --namespace storefront-dev \
+    -f examples/storefront/worker/values-dev.yaml --set tracing.enabled=true; } > "$tmp/sf.yaml"
+kc < "$tmp/sf.yaml"
+"$PY" -I - "$tmp/sf.yaml" <<'PY'
+import sys, yaml
+deps = {d["metadata"]["name"]: d for d in yaml.safe_load_all(open(sys.argv[1])) if d and d["kind"] == "Deployment"}
+for name in ("web", "api", "worker"):
+    env = {e["name"]: e.get("value") for e in deps[name]["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env.get("OTEL_EXPORTER_OTLP_ENDPOINT") == "http://tempo.tracing.svc:4318", (name, env)
+print("    web, api, worker: OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo.tracing.svc:4318")
+PY
 
 echo "• admission policies (optional platform/policies)"
 $KY test platform/policies/tests

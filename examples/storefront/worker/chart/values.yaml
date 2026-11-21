@@ -8,3 +8,8 @@ workTime: 100ms    # simulated work per order
 resources:
   requests: { cpu: 5m, memory: 16Mi }
   limits: { memory: 64Mi }
+# Traces to the platform's Tempo (platform.yaml components.tracing.enabled: true): turn on per environment in
+# values-<env>.yaml where Tempo runs. Off: no OTEL_* variables, tracing is a no-op in the worker.
+tracing:
+  enabled: false
+  endpoint: http://tempo.tracing.svc:4318   # OTLP over HTTP (platform-tracing)

@@ -38,6 +38,7 @@ optional:
 #   monitoring:                    # deep-merged into its Helm values (maps merge, lists replace)
 #     values: { prometheus: { prometheusSpec: { retentionSize: 12GB } } }
 #   cnpg: { enabled: false }
+#   tracing: { enabled: true }     # opt-in (default false): Grafana Tempo, OTLP at tempo.tracing.svc:4317/4318
 
 grafana:
   adminSecret: grafana-admin       # Secret in monitoring with admin-user, admin-password (created by bootstrap)

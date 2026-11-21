@@ -19,6 +19,12 @@ spec:
             - name: DATABASE_URL
               valueFrom: { secretKeyRef: { name: "{{ .Values.database.secret }}", key: uri } }
             - { name: WORK_TIME, value: "{{ .Values.workTime }}" }
+            {{- if .Values.tracing.enabled }}
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.tracing.endpoint | quote }} }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: OTEL_RESOURCE_ATTRIBUTES, value: "k8s.namespace.name=$(POD_NAMESPACE)" }
+            {{- end }}
           # Probe timeouts tolerate slowness (experiment api-slow-v3): with the default 1s, a 600ms network delay killed every
           # api pod (liveness) and took it out of the Service (readiness) — slowness became an outage. Liveness only detects a
           # stuck process: 5s x 6 (2 min) before a restart.

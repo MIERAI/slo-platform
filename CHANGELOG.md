@@ -4,6 +4,13 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+### Added
+- Optional component `tracing` (opt-in: `components.tracing.enabled: true`): Grafana Tempo 3.1.1 (chart
+  grafana-community/tempo 3.2.1, single binary, 24 h, 2 Gi volume, 256 Mi memory limit) with its OTLP receiver, and a
+  Tempo datasource in Grafana. Components can now be opt-in (`root.optIn`).
+- storefront example: opt-in tracing to Tempo (kustomize Component `examples/storefront/tracing`, worker
+  `tracing.enabled`).
+
 ## [0.2.0] - 2026-11-21
 
 ### Changed
