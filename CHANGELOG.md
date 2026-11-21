@@ -4,6 +4,8 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-21
+
 ### Changed
 - `init` pins the newest release tag of the product checkout by default (was `main`).
 
