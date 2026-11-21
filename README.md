@@ -4,8 +4,8 @@ SLOs you can trust. Declare service level objectives next to your application, g
 and **prove those alerts work**: a fault experiment library runs every day on a lab cluster and checks that each alert
 fires when it should — and that normal traffic pages nobody. Error budgets then gate promotions to production.
 
-> **Status: pre-alpha (P0).** The structure and the contract are being laid down; the platform is being extracted
-> from a working personal installation. Nothing here is installable yet. See [docs/roadmap.md](docs/roadmap.md).
+> **Status: pre-alpha (P1).** The generic platform, the two examples and the experiment tooling are in; installing
+> into your own cluster from one `platform.yaml` comes with P2. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 
