@@ -1,0 +1,23 @@
+name: Bug
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: "Commands you ran and what you saw (logs, `kubectl -n argocd get applications`)." }
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: What you expected, description: The doc or behaviour you relied on (link the section). }
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes: { label: slo-platform version, description: "product.version in platform.yaml, e.g. v0.2.0" }
+    validations: { required: true }
+  - type: dropdown
+    id: cluster
+    attributes: { label: Cluster, options: [kind, k3s / k3d, managed cloud (EKS / GKE / AKS / …), other] }
+    validations: { required: true }
+  - type: textarea
+    id: platform
+    attributes: { label: platform.yaml (without secrets), render: yaml }

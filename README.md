@@ -45,6 +45,13 @@ outage — until the outage. An alert that has never fired is a hope, not a safe
 | [`examples/`](examples/) | `sample-app` (quickstart) and `storefront` (reference: dependency chain, async pipeline) |
 | [`docs/`](docs/) | Concepts, quickstart, configuration reference, runbook |
 
+## Project status and support
+
+slo-platform is an **alpha**, maintained by one person in their spare time, on a best-effort basis: issues and pull
+requests are welcome and read, without a response time promise. It runs the maintainer's own two clusters (prod and
+lab) on released versions; the end-to-end test instantiates it from scratch every week. Breaking changes are possible
+before 1.0 and are written in [CHANGELOG.md](CHANGELOG.md) with an upgrade note. Security issues: [SECURITY.md](SECURITY.md).
+
 ## License
 
 [Apache-2.0](LICENSE)

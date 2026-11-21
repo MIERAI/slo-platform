@@ -1,0 +1,11 @@
+name: Idea or feature
+description: A failure mode, SLI type, receiver or workflow slo-platform should cover
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: The problem, description: "What you are trying to verify or run, and what is missing today." }
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes: { label: A possible solution, description: Optional. }
