@@ -1,0 +1,21 @@
+# Optional. In-cluster S3-compatible object storage (SeaweedFS) for database backups, where no cloud bucket is at hand.
+# Backups in the cluster they protect do not survive losing it: prefer an external bucket for anything that matters.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-object-storage
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-2" }
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/MIERAI/slo-platform.git
+    targetRevision: main
+    path: platform/object-storage
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: object-storage
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+    retry: { limit: 10, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }

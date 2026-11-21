@@ -1,0 +1,21 @@
+# The scheduled fault-experiment regression (platform/experiments): every experiment daily, results as metrics
+# (slo_experiment_*), a ticket when it fails or stops running. Meant for lab clusters only (installing it only there
+# is P2's init); the runner itself refuses to start unless every node is labelled slo-platform/lab=true.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-experiments
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/MIERAI/slo-platform.git
+    targetRevision: main
+    path: platform/experiments
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: slo-experiments
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true]
+    retry: { limit: 5, backoff: { duration: 10s, factor: 2, maxDuration: 3m } }

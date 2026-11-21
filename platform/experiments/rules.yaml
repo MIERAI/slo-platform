@@ -1,0 +1,36 @@
+# Meta-monitoring of the safety net: tickets, never pages (nobody's users are affected tonight; the alerts may be).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata: { name: experiment-regression, namespace: slo-experiments }
+spec:
+  groups:
+    - name: slo-experiments
+      rules:
+        - alert: SLOExperimentFailed
+          # the last run of an experiment failed: an alert did not fire (in time), one that must stay quiet fired, or
+          # something else paged. Until it passes again, that SLO's alerting is not verified.
+          expr: max by (experiment, namespace) (slo_experiment_last_success) == 0
+          for: 5m
+          labels: { severity: ticket }
+          annotations:
+            summary: "experiment {{ $labels.experiment }} ({{ $labels.namespace }}) failed its last run"
+            runbook: https://github.com/MIERAI/slo-platform/blob/main/docs/runbook.md#experiment-regression
+        - alert: SLOExperimentRegressionStale
+          # no scheduled regression finished for 2 days: the job did not run (lab asleep, CronJob broken), crashed,
+          # or the exporter is down
+          expr: |
+            time() - max(slo_experiment_regression_last_finished_timestamp_seconds) > 2 * 86400
+              or absent(slo_experiment_regression_last_finished_timestamp_seconds)
+          for: 1h
+          labels: { severity: ticket }
+          annotations:
+            summary: "the experiment regression has not finished for over 2 days"
+            runbook: https://github.com/MIERAI/slo-platform/blob/main/docs/runbook.md#experiment-regression
+        - alert: SLOExperimentRegressionBroken
+          # the runner itself failed (exit ≠ 0: a crash, results not recorded, killed): failed experiments do not
+          # count here (they are SLOExperimentFailed)
+          expr: max by (namespace, job_name) (kube_job_status_failed{namespace="slo-experiments"}) > 0
+          labels: { severity: ticket }
+          annotations:
+            summary: "experiment regression job {{ $labels.job_name }} failed"
+            runbook: https://github.com/MIERAI/slo-platform/blob/main/docs/runbook.md#experiment-regression

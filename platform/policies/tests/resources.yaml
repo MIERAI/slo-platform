@@ -1,0 +1,91 @@
+# Fixtures: one compliant Pod and one Pod per violation. Namespace "apps" is an application namespace (values.yaml).
+apiVersion: v1
+kind: Pod
+metadata: { name: good, namespace: apps }
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1a2b3c4
+      readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+      resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 32Mi } }
+      securityContext: { allowPrivilegeEscalation: false }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: latest-tag, namespace: apps }
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: app
+      image: ghcr.io/example/app:latest
+      readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+      resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 32Mi } }
+      securityContext: { allowPrivilegeEscalation: false }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: untagged-on-registry-port, namespace: apps }   # "host:5000/app" has a colon but no tag
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: app
+      image: registry.local:5000/app
+      readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+      resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 32Mi } }
+      securityContext: { allowPrivilegeEscalation: false }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: no-memory-limit, namespace: apps }
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1a2b3c4
+      readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+      resources: { requests: { cpu: 10m, memory: 16Mi } }
+      securityContext: { allowPrivilegeEscalation: false }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: no-probe, namespace: apps }
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1a2b3c4
+      resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 32Mi } }
+      securityContext: { allowPrivilegeEscalation: false }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: root-container-override, namespace: apps }   # Pod says non-root, the container overrides it
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1a2b3c4
+      readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+      resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 32Mi } }
+      securityContext: { allowPrivilegeEscalation: false, runAsNonRoot: false }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: job-pod-without-probe
+  namespace: apps
+  ownerReferences: [{ apiVersion: batch/v1, kind: Job, name: migrate, uid: 00000000-0000-0000-0000-000000000000 }]
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1a2b3c4
+      resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { memory: 32Mi } }
+      securityContext: { allowPrivilegeEscalation: false }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: other-namespace, namespace: unmanaged }   # not labelled: no policy applies
+spec:
+  containers: [{ name: app, image: nginx }]

@@ -1,0 +1,16 @@
+# Render test (scripts/validate.sh): every SLI type and option, without any application present.
+app: demo
+env: dev
+slos:
+  - { name: availability, objective: 99.5,
+      availability: { metric: http_requests_total, matchers: 'app="demo", route="GET /"', errors: 'code=~"5.."' } }
+  - { name: latency, objective: 99, latency: { metric: http_request_duration_seconds, matchers: 'app="demo"', threshold: "0.25" } }
+  - { name: probe, objective: 99.5, probe: { service: demo, port: 8080, path: /healthz } }
+  - { name: probe-external, objective: 99.5, probe: { url: "https://example.com/", prober: "prober.example:9115" } }
+  - { name: freshness, objective: 99.5, runbook: pipeline, age: { metric: last_success_timestamp_seconds, max: 90m } }
+  - { name: backups, objective: 99, bool: { metric: "cnpg:wal_archive_keeps_up:bool" } }
+  - name: completeness
+    objective: 99.9
+    severities: { slowBurn: page }
+    ratio: { errors: { metric: jobs_overdue_total }, total: { metric: jobs_created_total, matchers: 'app="demo"' } }
+  - { name: prod-only, objective: 99, environments: [prod], bool: { metric: up } }

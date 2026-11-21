@@ -1,0 +1,36 @@
+# The results as metrics (exporter.py reads the ConfigMap experiment-results at every scrape; the runner writes it).
+# honorLabels: the metrics carry the experiment's namespace, not the exporter's.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: experiment-exporter, namespace: slo-experiments }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: experiment-exporter } }
+  template:
+    metadata: { labels: { app: experiment-exporter } }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 65534, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: exporter
+          image: python:3.13.17-alpine3.24
+          command: [python3, -I, -B, /app/exporter.py, "8080"]
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 64Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: app, mountPath: /app, readOnly: true }
+            - { name: results, mountPath: /results, readOnly: true }
+      volumes:
+        - { name: app, configMap: { name: experiment-exporter } }
+        - { name: results, configMap: { name: experiment-results, optional: true } }   # created by the first run
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata: { name: experiment-exporter, namespace: slo-experiments }
+spec:
+  selector: { matchLabels: { app: experiment-exporter } }
+  podMetricsEndpoints: [{ port: http, path: /metrics, interval: 60s, honorLabels: true }]

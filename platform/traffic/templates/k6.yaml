@@ -1,0 +1,61 @@
+{{- /*
+One k6 Deployment `traffic` in the application's namespace: requests go to Services of this namespace by name, so the
+same app.yaml serves every environment. k6's REST API (--address) doubles as the readiness probe: admission baselines
+(platform/policies) want one on every long-running workload.
+*/}}
+{{- if not .Values.requests }}{{ fail "traffic.requests: at least one request" }}{{ end }}
+{{- $requests := list }}
+{{- range .Values.requests }}
+{{- if not (and .weight .method .service .port) }}{{ fail (printf "traffic.requests: weight, method, service and port are required: %v" .) }}{{ end }}
+{{- $r := dict "weight" .weight "method" (upper .method) "url" (printf "http://%s.%s.svc:%v%s" .service $.Release.Namespace .port (.path | default "/")) }}
+{{- if hasKey . "body" }}{{ $_ := set $r "body" .body }}{{ end }}
+{{- if hasKey . "badBody" }}{{ $_ := set $r "badBody" .badBody }}{{ $_ := set $r "badRate" (ternary .badRate 0.05 (hasKey . "badRate")) }}{{ end }}
+{{- $requests = append $requests $r }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traffic-script
+  namespace: {{ .Release.Namespace }}
+  labels: { app.kubernetes.io/name: traffic, app.kubernetes.io/part-of: slo-platform }
+data:
+  traffic.js: |
+{{ .Files.Get "files/traffic.js" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic
+  namespace: {{ .Release.Namespace }}
+  labels: { app.kubernetes.io/name: traffic, app.kubernetes.io/part-of: slo-platform }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: traffic } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: traffic, app.kubernetes.io/part-of: slo-platform }
+      annotations: { slo-platform/script: {{ .Files.Get "files/traffic.js" | sha256sum | trunc 16 | quote }} }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 12345, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: k6
+          image: {{ .Values.image }}
+          args: [run, --quiet, --summary-mode=disabled, --address=0.0.0.0:6565, /scripts/traffic.js]
+          env:
+            - { name: REQUESTS, value: {{ toJson $requests | quote }} }
+            - { name: PEAK_RPM, value: {{ .Values.peakRpm | toString | quote }} }
+            - { name: SCALE, value: {{ .Values.scale | toString | quote }} }
+            - { name: DAY_MINUTES, value: {{ .Values.day.minutes | toString | quote }} }
+            - { name: DAYS, value: {{ .Values.day.days | toString | quote }} }
+            - { name: ALIGN_CLOCK, value: {{ ternary "1" "0" .Values.day.alignClock | quote }} }
+            - { name: TZ_OFFSET_HOURS, value: {{ .Values.day.tzOffsetHours | toString | quote }} }
+            - { name: BURST_HOURS, value: {{ join "," .Values.day.burstHours | quote }} }
+          ports: [{ name: api, containerPort: 6565 }]
+          readinessProbe: { httpGet: { path: /v1/status, port: api }, periodSeconds: 30 }
+          volumeMounts: [{ name: script, mountPath: /scripts }, { name: tmp, mountPath: /tmp }]
+          resources: {{ toJson .Values.resources }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+      volumes:
+        - { name: script, configMap: { name: traffic-script } }
+        - { name: tmp, emptyDir: {} }

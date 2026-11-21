@@ -1,0 +1,18 @@
+# kyverno test platform/policies/tests — every policy must reject its bad fixture and accept the good one
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata: { name: workload-baseline }
+policies: [../workload-baseline.yaml]
+resources: [resources.yaml]
+variables: values.yaml
+results:
+  - { policy: disallow-latest-tag, kind: Pod, result: pass, resources: [apps/good, apps/no-memory-limit, apps/no-probe] }
+  - { policy: disallow-latest-tag, kind: Pod, result: fail, resources: [apps/latest-tag, apps/untagged-on-registry-port] }
+  - { policy: require-resources, kind: Pod, result: pass, resources: [apps/good, apps/latest-tag] }
+  - { policy: require-resources, kind: Pod, result: fail, resources: [apps/no-memory-limit] }
+  - { policy: require-readiness-probe, kind: Pod, result: pass, resources: [apps/good] }
+  - { policy: require-readiness-probe, kind: Pod, result: fail, resources: [apps/no-probe] }
+  - { policy: require-readiness-probe, kind: Pod, result: skip, resources: [apps/job-pod-without-probe] }
+  - { policy: require-non-root, kind: Pod, result: pass, resources: [apps/good] }
+  - { policy: require-non-root, kind: Pod, result: fail, resources: [apps/root-container-override] }
+  - { policy: disallow-latest-tag, kind: Pod, result: skip, resources: [unmanaged/other-namespace] }   # not an application namespace

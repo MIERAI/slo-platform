@@ -1,0 +1,23 @@
+# Platform SLIs: 0/1 recording rules that app.yaml SLOs of kind `bool` count (platform/slo). Here, not in an
+# application's directory: a PrometheusRule is evaluated over every namespace, so a copy per environment (dev, prod)
+# would write the same series twice. CloudNativePG: assumes one cluster per namespace, as the PodMonitors select
+# (cnpg.io/cluster: postgres); a restore check's throwaway cluster is not scraped.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata: { name: platform-slis }
+spec:
+  groups:
+    - name: platform.slis.cnpg
+      rules:
+        # Recovery point: 1 while WAL reaches the object store, 0 once the primary has had a segment waiting to be
+        # archived (archive_status/*.ready) for 10 minutes on end. Not "time since the last archival": an idle
+        # database writes no WAL, so nothing is archived and nothing is at risk (archive_timeout only switches a
+        # segment that has new WAL) — that rule paged for hours on idle databases.
+        # Blind to: archive_mode switched off (nothing becomes .ready), WAL that has not reached a segment switch yet
+        # (≤ archive_timeout, 5 min).
+        - record: cnpg:wal_archive_keeps_up:bool
+          expr: >-
+            min by (namespace) (
+              (min_over_time(cnpg_collector_pg_wal_archive_status{value="ready"}[10m]) == bool 0)
+              and on (namespace, pod) (cnpg_pg_replication_in_recovery == 0)
+            )

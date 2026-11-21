@@ -1,0 +1,113 @@
+{{- /*
+One ServiceLevelObjective per slo. Every query gets namespace="<release namespace>": one declaration serves every
+environment, and the namespace becomes a label of the recording rules and alerts (the series of dev and prod differ).
+  availability: bad = metric{namespace, matchers, errors}  among  metric{namespace, matchers}
+  latency:      good = metric_bucket{namespace, matchers, le=threshold}  among  metric_count{namespace, matchers}
+  probe:        good = probe_success == 1 among the probes: a blackbox prober (platform-blackbox) calls the service from
+                outside its pods every 15s, so an outage with no pod left to count the failures still burns the budget
+                (every pod of a service down once paged nobody). Also renders the Probe. Optional: url (a full URL
+                instead of service/port/path: something outside the cluster) and prober (another blackbox exporter,
+                host:port: probing from another machine, as users outside the cluster see it).
+  age:          scheduled jobs. metric = unix time of the last good run; good = every evaluation (30s) at which it is
+                at most `max` old (share of time a fresh result exists). Renders the 0/1 recording rule
+                slo:age_within_max:bool{namespace, slo_age} that Pyrra counts (bool_gauge). A metric that never
+                appeared (a job that never succeeded) is "SLI absent", a ticket.
+  bool:         a 0/1 gauge made elsewhere (1 = good), e.g. platform/cnpg's cnpg:wal_archive_keeps_up:bool.
+  ratio:        bad = errors.metric{namespace, errors.matchers}  among  total.metric{namespace, total.matchers}: two
+                counters, e.g. orders not processed in time among orders created (asynchronous pipelines). Both
+                must exist (export them at 0): an absent error counter is "SLI absent", not zero errors.
+Optional per slo: environments (only these), severities (merged over .Values.severities), runbook (anchor).
+*/}}
+{{- range .Values.slos }}
+{{- $slo := . }}
+{{- if or (not .environments) (has $.Values.env .environments) }}
+{{- $kind := "" }}
+{{- range list "availability" "latency" "probe" "age" "bool" "ratio" }}{{ if hasKey $slo . }}{{ $kind = . }}{{ end }}{{ end }}
+{{- if not $kind }}{{ fail (printf "slo %s: one of availability, latency, probe, age, bool, ratio is required" .name) }}{{ end }}
+{{- $sli := index . $kind }}
+{{- $sel := printf "namespace=%q" $.Release.Namespace }}
+{{- if $sli.matchers }}{{ $sel = printf "%s, %s" $sel $sli.matchers }}{{ end }}
+{{- $id := printf "%s-%s" $.Values.app .name }}
+{{- if eq $kind "probe" }}{{ $sel = printf "%s, slo_probe=%q" $sel $id }}{{ end }}
+{{- $severities := merge (deepCopy (.severities | default dict)) $.Values.severities }}
+{{- $anchor := .runbook | default (ternary "latency" "error-budget-burn" (eq $kind "latency")) }}
+{{- if eq $kind "probe" }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: {{ $id }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  prober: { url: {{ $sli.prober | default $.Values.prober | quote }} }
+  module: {{ $sli.module | default "http_2xx" }}
+  interval: {{ $sli.interval | default "15s" }}
+  targets:
+    staticConfig:
+      static: [{{ $sli.url | default (printf "http://%s.%s.svc:%v%s" $sli.service $.Release.Namespace $sli.port ($sli.path | default "/")) | quote }}]
+      labels: { slo_probe: {{ $id | quote }} }
+{{- end }}
+{{- if eq $kind "age" }}
+{{- $n := regexFind "^[0-9]+" (toString $sli.max) }}
+{{- $unit := trimPrefix $n (toString $sli.max) }}
+{{- if not (and $n (hasKey (dict "s" 1 "m" 1 "h" 1 "d" 1) $unit)) }}{{ fail (printf "slo %s: age.max must look like 26h / 90m / 7d" .name) }}{{ end }}
+{{- $seconds := mul (atoi $n) (get (dict "s" 1 "m" 60 "h" 3600 "d" 86400) $unit) }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $id }}-sli
+  namespace: {{ $.Release.Namespace }}
+spec:
+  groups:
+    - name: {{ $.Release.Namespace }}.{{ $id }}.sli
+      rules:
+        # 1 while the last good run is at most {{ $sli.max }} old, else 0; nothing while the metric is absent
+        - record: slo:age_within_max:bool
+          expr: {{ printf "time() - max by (namespace) (%s{%s}) <= bool %d" $sli.metric $sel $seconds | quote }}
+          labels: { slo_age: {{ $id | quote }} }
+{{- end }}
+---
+apiVersion: pyrra.dev/v1alpha1
+kind: ServiceLevelObjective
+metadata:
+  name: {{ $id }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    pyrra.dev/app: {{ $.Values.app | quote }}
+    pyrra.dev/env: {{ $.Values.env | quote }}
+  annotations:
+    pyrra.dev/runbook: {{ printf "%s#%s" $.Values.runbook $anchor | quote }}
+    pyrra.dev/summary: {{ printf "%s %s: %s SLO %v%% is burning its error budget" $.Values.app $.Values.env .name .objective | quote }}
+spec:
+  description: {{ .description | default (printf "%s %s" $.Values.app .name) | quote }}
+  target: {{ .objective | toString | quote }}
+  window: {{ .window | default "28d" }}
+  indicator:
+    {{- if eq $kind "availability" }}
+    ratio:
+      errors: { metric: {{ printf "%s{%s, %s}" $sli.metric $sel $sli.errors | quote }} }
+      total: { metric: {{ printf "%s{%s}" $sli.metric $sel | quote }} }
+    {{- else if eq $kind "latency" }}
+    latency:
+      success: { metric: {{ printf "%s_bucket{%s, le=%q}" $sli.metric $sel (toString $sli.threshold) | quote }} }
+      total: { metric: {{ printf "%s_count{%s}" $sli.metric $sel | quote }} }
+    {{- else if eq $kind "probe" }}
+    bool_gauge:
+      metric: {{ printf "probe_success{%s}" $sel | quote }}
+    {{- else if eq $kind "ratio" }}
+    {{- $ns := printf "namespace=%q" $.Release.Namespace }}
+    ratio:
+      errors: { metric: {{ printf "%s{%s}" $sli.errors.metric (join ", " (compact (list $ns $sli.errors.matchers))) | quote }} }
+      total: { metric: {{ printf "%s{%s}" $sli.total.metric (join ", " (compact (list $ns $sli.total.matchers))) | quote }} }
+    {{- else if eq $kind "age" }}
+    bool_gauge:
+      metric: {{ printf "slo:age_within_max:bool{namespace=%q, slo_age=%q}" $.Release.Namespace $id | quote }}
+    {{- else }}
+    bool_gauge:
+      metric: {{ printf "%s{%s}" $sli.metric $sel | quote }}
+    {{- end }}
+  alerting:
+    severities: {{ toJson $severities }}
+{{- end }}
+{{- end }}

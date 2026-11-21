@@ -1,0 +1,51 @@
+# The runner's rights, nothing more (scripts/experiment.py, scripts/experiment-regression.py):
+#   read namespaces (marks, which exist) and nodes (the "is this a lab?" guard)      cluster-wide, read-only
+#   annotate namespaces (lock, cooldown)                                              cluster-wide, patch only
+#   query Prometheus through the API server's service proxy                           only kps-prometheus
+#   write its results ConfigMap                                                       only its own namespace
+# Faults, loads and the application fault switch in an application's namespaces: a Role + RoleBinding rendered per
+# application × environment by the slo chart (platform/slo, experimentRunner) — never a list of namespaces here.
+# Chaos Mesh only injects into namespaces annotated chaos-mesh.org/inject=enabled (set by apps/applicationset.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: experiment-runner, namespace: slo-experiments }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: slo-platform:experiment-runner }
+rules:
+  - { apiGroups: [""], resources: [namespaces, nodes], verbs: [get, list] }
+  # RBAC cannot select namespaces by label: patch is cluster-wide. The runner only ever sets its own annotations.
+  - { apiGroups: [""], resources: [namespaces], verbs: [patch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: slo-platform:experiment-runner }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: "slo-platform:experiment-runner" }
+subjects: [{ kind: ServiceAccount, name: experiment-runner, namespace: slo-experiments }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: experiment-runner-prometheus, namespace: monitoring }
+rules:
+  - { apiGroups: [""], resources: [services/proxy], verbs: [get], resourceNames: ["kps-prometheus:9090"] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: experiment-runner-prometheus, namespace: monitoring }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: experiment-runner-prometheus }
+subjects: [{ kind: ServiceAccount, name: experiment-runner, namespace: slo-experiments }]
+---
+# create cannot be limited to a name (RBAC): any new ConfigMap here; existing ones only experiment-results
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: experiment-runner-results, namespace: slo-experiments }
+rules:
+  - { apiGroups: [""], resources: [configmaps], verbs: [create] }
+  - { apiGroups: [""], resources: [configmaps], verbs: [get, patch], resourceNames: [experiment-results] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: experiment-runner-results, namespace: slo-experiments }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: experiment-runner-results }
+subjects: [{ kind: ServiceAccount, name: experiment-runner, namespace: slo-experiments }]

@@ -14,3 +14,11 @@ jobs:
         run: shellcheck scripts/*.sh
       - name: No personal values
         run: scripts/check-residue.sh
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo scripts/install-tools.sh
+      - name: Render and validate (scripts/validate.sh)
+        run: scripts/validate.sh
