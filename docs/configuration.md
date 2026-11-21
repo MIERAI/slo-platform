@@ -44,7 +44,7 @@ come from the instance repository; its SLOs and synthetic users are rendered by 
 | `--owner`, `--repo` | — | the GitHub repository the instance will be pushed to: `instance.repo` = `https://github.com/<owner>/<repo>.git` |
 | `--cluster` | `lab:lab:kind` | repeatable: `name:role:runtime[:objectStorage]` (`lab:kind` / `prod:k3s` when the name is the role) |
 | `--example` | `sample-app` | repeatable: copies `examples/<app>/` of this product (with its experiments, without results) to `apps/<app>/`; `none` for an empty `apps/` |
-| `--version` | `main` | `product.version` |
+| `--version` | the newest release tag (`v*`) of the product checkout, else `main` | `product.version` |
 | `--timezone` | `Etc/UTC` | `timezone` |
 | `--product-repo` | this repository | `product.repo` (a fork) |
 | `--age` | off | SOPS + age: see [Secrets](#secrets) |

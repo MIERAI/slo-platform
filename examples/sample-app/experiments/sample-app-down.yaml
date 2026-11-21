@@ -1,6 +1,7 @@
 hypothesis: >-
-  Every sample-app pod fails — users get connection errors on /hello. That is the worst outage there is, so the
-  availability SLO must page within 10 minutes — even though no pod is left to count the failed requests.
+  Every sample-app pod fails — users get connection errors on /hello. That is the worst outage there is, so it must
+  page within 10 minutes — through the probe SLO, since no pod is left to count the failed requests for the
+  availability SLO.
 namespace: sample-app-dev
 fault:
   - apiVersion: chaos-mesh.org/v1alpha1

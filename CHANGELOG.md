@@ -4,6 +4,17 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+### Changed
+- `init` pins the newest release tag of the product checkout by default (was `main`).
+
+### Fixed (found by a clean-room reproduction: a new user following the docs in another GitHub organisation)
+- Quickstart: PyYAML on macOS (PEP 668: virtualenv or uv), the Grafana service name, committing experiment results,
+  gh with SSH protocol.
+- Bootstrap on an existing cluster: keep its kubeconfig in its own file (k3d example; `k3d cluster delete` rewrites
+  ~/.kube/config unless KUBECONFIG points elsewhere), choosing runtime k3s, the `next` output carries --kubeconfig,
+  removing the platform's workloads before destroy.
+- sample-app-down's hypothesis names the probe SLO (its prediction always did).
+
 ### Notes
 - P5: the reference installation (two k3s clusters, prod and lab) runs v0.1.1 from an existing GitOps repository
   (`instance.apps: "."`, extras, per-cluster components); switched in ~40 s per cluster with no resource recreated.

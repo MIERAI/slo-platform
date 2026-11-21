@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import shutil
 import stat
 import tempfile
@@ -169,6 +170,22 @@ class Init(Tmp):
         self.assertFalse(os.path.exists(os.path.join(d, "secrets", "lab.sops.yaml")))
         self.assertTrue(any("warning" in o for o in out))
         self.assertIn("secrets/example.yaml", read(os.path.join(d, ".gitignore")))
+
+
+class LatestRelease(unittest.TestCase):
+    def test_newest_tag_else_main(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        self.assertEqual(sp.latest_release(d), "main")                     # not a git checkout
+        g = ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(["git", "init", "-q", d], check=True)
+        subprocess.run(g + ["commit", "-q", "--allow-empty", "-m", "a"], check=True)
+        self.assertEqual(sp.latest_release(d), "main")                     # no tags
+        subprocess.run(g + ["tag", "v0.1.0"], check=True)
+        subprocess.run(g + ["commit", "-q", "--allow-empty", "-m", "b"], check=True)
+        subprocess.run(g + ["tag", "v0.2.0"], check=True)
+        subprocess.run(g + ["tag", "not-a-release"], check=True)
+        self.assertEqual(sp.latest_release(d), "v0.2.0")
 
 
 class Check(Tmp):

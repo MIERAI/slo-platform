@@ -32,6 +32,17 @@ except ImportError:  # pragma: no cover
 
 PRODUCT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # this checkout of slo-platform
 PRODUCT_REPO = "https://github.com/MIERAI/slo-platform.git"
+
+
+def latest_release(product=PRODUCT):
+    """The newest release tag (v*) reachable in this checkout of the product, else "main": instances pin a release by
+    default (upgrade = change it), not a moving branch."""
+    try:
+        r = subprocess.run(["git", "-C", product, "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return "main"
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "main"
 SCHEMA_FILE = os.path.join("platform", "root", "values.schema.json")
 VALUES_FILE = os.path.join("platform", "root", "values.yaml")
 DEFAULT_AGE_KEY = os.path.join("~", ".config", "sops", "age", "keys.txt")
@@ -911,7 +922,8 @@ def main(argv=None):
                         "objectStorage none|in-cluster")
     p.add_argument("--example", action="append", default=None, metavar="APP",
                    help="copy examples/APP to apps/APP (repeatable; default sample-app; 'none' for no application)")
-    p.add_argument("--version", default="main", help="product version (git tag or branch; default main)")
+    p.add_argument("--version", default=None,
+                   help="product version (git tag or branch; default: the newest release tag of this checkout, else main)")
     p.add_argument("--timezone", default="Etc/UTC", help="IANA time zone (default Etc/UTC)")
     p.add_argument("--product-repo", default=PRODUCT_REPO, help="the product repository (a fork)")
     p.add_argument("--age", action="store_true", help="set up SOPS + age: a key, .sops.yaml, secrets skeletons")
@@ -937,7 +949,7 @@ def main(argv=None):
         if a.cmd == "init":
             clusters = [parse_cluster(c) for c in (a.cluster or ["lab:lab:kind"])]
             examples = [e for e in (a.example if a.example is not None else ["sample-app"]) if e != "none"]
-            init(a.dir, a.owner, a.repo, clusters, list(dict.fromkeys(examples)), a.version, a.timezone,
+            init(a.dir, a.owner, a.repo, clusters, list(dict.fromkeys(examples)), a.version or latest_release(), a.timezone,
                  a.product_repo, a.age, a.age_key_file)
             problems = check(a.dir)
             if problems:   # pragma: no cover (a product whose examples do not pass its own check)
