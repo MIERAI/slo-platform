@@ -20,8 +20,8 @@ The same path runs in CI on every release (`scripts/e2e.sh`, see [End-to-end tes
 | Python | ≥ 3.9 with PyYAML | Linux: `apt install python3-yaml`. macOS (Homebrew's Python refuses `pip install` system-wide, PEP 668): a virtualenv — `python3 -m venv ~/.venvs/slo && ~/.venvs/slo/bin/pip install pyyaml`, then run the tools with `~/.venvs/slo/bin/python bin/slo-platform …` — or with [uv](https://docs.astral.sh/uv/): `uv run --with pyyaml bin/slo-platform …` |
 | [gh](https://cli.github.com) | optional | creating the repository and a token in one command each |
 
-A GitHub account for the instance repository. While the product repository is private, Argo CD needs a token that
-can read both repositories (`gh auth token`, or a fine-grained token with *Contents: read*).
+A GitHub account for the instance repository. A token is only needed when the instance repository is private: Argo CD
+reads it with that token (`gh auth token`, or a fine-grained token with *Contents: read* on it).
 
 Linux only: kind runs many pods in one container and the default inotify limits are too small (symptom: pods crash
 with `too many open files`):

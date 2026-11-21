@@ -1,0 +1,7 @@
+# Keeps the CI's GitHub Actions current. Charts, images and tools are pinned on purpose (platform/root, install-tools.sh):
+# they move with a release, tested end to end, not by a bot.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
