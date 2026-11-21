@@ -9,6 +9,12 @@ fires when it should — and that normal traffic pages nobody. Error budgets the
 > Notification receivers (`notify` in platform.yaml, P3) are in; P3 is done when a page from the documented quickstart
 > (P4) reaches ntfy. See [docs/roadmap.md](docs/roadmap.md).
 
+## Quickstart
+
+[docs/quickstart.md](docs/quickstart.md): `slo-platform init`, push, `tofu apply` on kind, and the first fault
+experiment proves that an outage pages in time — about 30 minutes, most of it waiting.
+`scripts/e2e.sh` runs the same path unattended (CI: weekly and on every release).
+
 ## Why
 
 SLO tools generate alert rules (Pyrra, Sloth). Nothing tells you whether those rules would actually fire during a real

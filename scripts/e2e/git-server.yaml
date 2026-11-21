@@ -1,0 +1,105 @@
+# scripts/e2e.sh: a read-only git server inside the e2e cluster, so that Argo CD clones the product and the instance
+# over plain http without any GitHub token or external repository. git's own smart-HTTP CGI (git http-backend) behind
+# a few lines of Python's standard library; the bare repositories are copied in with `kubectl exec … tar`.
+# Repositories: http://git.slo-e2e-git.svc.cluster.local/<name>.git (from /srv/git/<name>.git).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: slo-e2e-git
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-server
+  namespace: slo-e2e-git
+data:
+  server.py: |
+    import os, subprocess
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    ROOT = "/srv/git"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.cgi()
+
+        def do_POST(self):
+            self.cgi()
+
+        def body(self):
+            if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+                out = b""
+                while True:
+                    size = int(self.rfile.readline().split(b";")[0].strip() or b"0", 16)
+                    if size == 0:
+                        self.rfile.readline()
+                        return out
+                    out += self.rfile.read(size)
+                    self.rfile.readline()
+            return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+
+        def cgi(self):
+            path, _, query = self.path.partition("?")
+            if path == "/healthz":
+                self.send_response(200)
+                self.end_headers()
+                return
+            data = self.body() if self.command == "POST" else b""
+            env = {"PATH": os.environ["PATH"], "GIT_PROJECT_ROOT": ROOT, "GIT_HTTP_EXPORT_ALL": "1",
+                   "PATH_INFO": path, "QUERY_STRING": query, "REQUEST_METHOD": self.command,
+                   "CONTENT_TYPE": self.headers.get("Content-Type", ""), "CONTENT_LENGTH": str(len(data)),
+                   "REMOTE_ADDR": self.client_address[0]}
+            for k, v in self.headers.items():   # Git-Protocol (v2), Content-Encoding (gzip), …
+                env["HTTP_" + k.upper().replace("-", "_")] = v
+            r = subprocess.run(["git", "http-backend"], input=data, env=env, capture_output=True)
+            head, sep, out = r.stdout.partition(b"\r\n\r\n")
+            if not sep:
+                head, sep, out = r.stdout.partition(b"\n\n")
+            status, headers = 200, []
+            for line in head.decode("latin-1").splitlines():
+                k, _, v = line.partition(":")
+                if k.lower() == "status":
+                    status = int(v.split()[0])
+                elif k:
+                    headers.append((k, v.strip()))
+            if r.returncode != 0 and not sep:
+                status, headers, out = 500, [], r.stderr
+            self.send_response(status)
+            for k, v in headers:
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+    ThreadingHTTPServer(("", 8080), Handler).serve_forever()
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: git
+  namespace: slo-e2e-git
+  labels: { app: git }
+spec:
+  containers:
+    - name: git
+      image: python:3.13-alpine3.22
+      command: [sh, -c]
+      args:
+        - apk add --no-cache -q git git-daemon && git config --system safe.directory '*' && mkdir -p /srv/git &&
+          exec python3 -u /app/server.py
+      ports: [{ name: http, containerPort: 8080 }]
+      readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 2 }
+      resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 256Mi } }
+      volumeMounts: [{ name: app, mountPath: /app }, { name: repos, mountPath: /srv/git }]
+  volumes:
+    - { name: app, configMap: { name: git-server } }
+    - { name: repos, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git
+  namespace: slo-e2e-git
+spec:
+  selector: { app: git }
+  ports: [{ name: http, port: 80, targetPort: http }]

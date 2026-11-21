@@ -5,6 +5,12 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- `docs/quickstart.md` (P4): from nothing to the first passing experiment on kind, with troubleshooting;
+  `docs/runbook.md`: what to do per alert (ErrorBudgetBurn per SLI type, SLOMetricAbsent, the regression's tickets).
+- `scripts/e2e.sh`: the template instantiated end to end on a throwaway kind cluster without GitHub (an in-cluster git
+  server serves this checkout and an `init` instance; `bootstrap/tofu/kind`; every Application Synced + Healthy;
+  `--experiment`: sample-app-down must PASS; diagnosis on failure). Workflow `e2e`: weekly, on `v*` tags (with the
+  experiment), on pull requests that change it, on demand.
 - Notifications (P3): `notify` in platform.yaml routes pages and tickets of prod clusters to receivers of Alertmanager's
   own integrations — Telegram, Slack, Discord, e-mail, ntfy (webhook with ntfy's JSON publishing), Pushover, Teams,
   Mattermost, webhook — plus a dead man's switch (`Watchdog` to an outside watcher). Texts in en / zh / ja. Secrets from
