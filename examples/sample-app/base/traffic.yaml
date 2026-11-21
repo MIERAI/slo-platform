@@ -1,0 +1,24 @@
+# Steady traffic for the canary analysis (2 req/s, every environment). The platform's synthetic users (app.yaml
+# `traffic`) follow a day profile: at night sample-app gets a few requests per minute, half of them to the canary —
+# too few for the analysis (hello-ok, analysis.yaml), which needs requests on the canary pods within a 1m window and
+# fails safe (aborts the rollout) when there are none. This constant floor keeps every release judgeable.
+# Remove it only if your real traffic never drops below ~1 req/s.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synthetic-traffic
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: synthetic-traffic } }
+  template:
+    metadata: { labels: { app: synthetic-traffic } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 100, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: curl
+          image: curlimages/curl:8.11.1
+          command: ["sh", "-c", "while true; do curl -s -o /dev/null --max-time 2 'http://sample-app:8080/hello?name=synthetic'; sleep 0.5; done"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 32Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }

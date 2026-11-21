@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-app
+spec:   # ClusterIP: reach it with kubectl port-forward (examples/README.md)
+  selector: { app: sample-app }
+  ports: [{ name: http, port: 8080, targetPort: http }]
+---
+# Canary-only Service for the load test: Argo Rollouts adds the canary's pod-template-hash to this selector during an
+# update (it selects the stable pods otherwise).
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-app-canary
+spec:
+  selector: { app: sample-app }
+  ports: [{ name: http, port: 8080, targetPort: http }]

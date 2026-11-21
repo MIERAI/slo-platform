@@ -1,0 +1,5 @@
+apiVersion: v2
+name: storefront-worker
+description: storefront's background worker (processes orders). Values per environment next to the chart.
+type: application
+version: 0.1.0

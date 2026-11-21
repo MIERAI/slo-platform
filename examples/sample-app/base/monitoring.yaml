@@ -1,0 +1,57 @@
+# Metrics and a dashboard for sample-app. The SLOs and their burn-rate alerts are declared in sample-app/app.yaml
+# (rendered by the platform into Pyrra objectives); the recording rules here only feed the dashboard.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: sample-app
+spec:
+  selector: { matchLabels: { app: sample-app } }
+  podTargetLabels: [app, rollouts-pod-template-hash]   # app: the SLOs (app.yaml); the hash: canary vs stable
+  podMetricsEndpoints:
+    - { port: http, path: /metrics, interval: 10s }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: sample-app
+spec:
+  groups:
+    - name: sample-app.dashboard
+      rules:
+        - record: sample_app:hello_errors:ratio_rate5m
+          # errors / total; a namespace with no error series counts as 0 errors (total * 0). Neither errors/total
+          # (empty when no error) nor 1 - success/total (empty when everything fails → the alert would stay silent).
+          expr: |
+            (sum by (namespace) (rate(http_requests_total{route="GET /hello",code=~"5.."}[5m]))
+               or sum by (namespace) (rate(http_requests_total{route="GET /hello"}[5m])) * 0)
+              / sum by (namespace) (rate(http_requests_total{route="GET /hello"}[5m]))
+        - record: sample_app:hello_errors:ratio_rate1h
+          # errors / total; a namespace with no error series counts as 0 errors (total * 0). Neither errors/total
+          # (empty when no error) nor 1 - success/total (empty when everything fails → the alert would stay silent).
+          expr: |
+            (sum by (namespace) (rate(http_requests_total{route="GET /hello",code=~"5.."}[1h]))
+               or sum by (namespace) (rate(http_requests_total{route="GET /hello"}[1h])) * 0)
+              / sum by (namespace) (rate(http_requests_total{route="GET /hello"}[1h]))
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sample-app-dashboard
+  labels: { grafana_dashboard: "1" }
+data:
+  sample-app.json: |
+    {
+      "title": "sample-app", "uid": "sample-app", "schemaVersion": 39, "refresh": "10s", "time": { "from": "now-30m", "to": "now" },
+      "templating": { "list": [ { "name": "namespace", "type": "query", "datasource": "Prometheus",
+        "query": "label_values(http_requests_total, namespace)", "refresh": 2 } ] },
+      "panels": [
+        { "type": "timeseries", "title": "Requests / s by code", "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+          "targets": [ { "expr": "sum by (code) (rate(http_requests_total{namespace=\"$namespace\",route=\"GET /hello\"}[1m]))", "legendFormat": "{{code}}" } ] },
+        { "type": "timeseries", "title": "Error ratio by version (canary vs stable)", "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+          "targets": [ { "expr": "sum by (rollouts_pod_template_hash) (rate(http_requests_total{namespace=\"$namespace\",route=\"GET /hello\",code=~\"5..\"}[1m])) / sum by (rollouts_pod_template_hash) (rate(http_requests_total{namespace=\"$namespace\",route=\"GET /hello\"}[1m]))", "legendFormat": "{{rollouts_pod_template_hash}}" } ] },
+        { "type": "timeseries", "title": "p95 latency (s)", "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+          "targets": [ { "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace=\"$namespace\",route=\"GET /hello\"}[1m])))", "legendFormat": "p95" } ] },
+        { "type": "stat", "title": "Error ratio (1h) vs SLO budget 0.5%", "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "targets": [ { "expr": "sample_app:hello_errors:ratio_rate1h{namespace=\"$namespace\"}" } ] }
+      ]
+    }

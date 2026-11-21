@@ -1,0 +1,8 @@
+# storefront: services released and promoted on their own: web (the page, takes orders) → api (products). Orders go
+# to Postgres (postgres.yaml); the worker (Helm chart, ../worker) processes them. One overlay per environment holds
+# both images; a promotion moves one image at a time. Services are ClusterIP: reach web with kubectl port-forward.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs: { app.kubernetes.io/part-of: storefront }
+resources: [web.yaml, api.yaml, postgres.yaml, monitoring.yaml]

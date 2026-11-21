@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sample-app-dev
+resources: [../../base]
+replicas:
+  - name: sample-app
+    count: 2   # a canary at 50% = 1 of 2 pods
+images:
+  - name: ghcr.io/mierai/sample-app
+    newTag: "1498189"

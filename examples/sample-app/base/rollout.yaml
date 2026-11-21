@@ -1,0 +1,47 @@
+# Canary release with automatic abort (the image is public: no pull secret needed):
+#   50% → pause 30s → analysis (canary pods' error ratio and p95 from Prometheus, 4 checks) → 100%.
+#   If the analysis fails, the rollout aborts and the stable version keeps serving.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: sample-app
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector: { matchLabels: { app: sample-app } }
+  strategy:
+    canary:
+      canaryService: sample-app-canary   # load-test target (canary pods only)
+      # Replica-weighted canary: the Service selects all pods, so the canary gets its share of the (synthetic) traffic
+      # and the analysis judges it on real request metrics.
+      steps:
+        - setWeight: 50
+        - pause: { duration: 30s }        # let Prometheus collect a few scrapes of the canary
+        # metric analysis of the canary's real traffic AND a load test against the canary only, in parallel:
+        # a regression that shows only under load (contention, pool exhaustion) passes the metrics at 2 rps
+        - analysis:
+            templates: [{ templateName: hello-ok }, { templateName: load-test }]
+            args:
+              - { name: namespace, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+              - { name: canary-hash, valueFrom: { podTemplateHashValue: Latest } }
+        - setWeight: 100
+  template:
+    metadata: { labels: { app: sample-app } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: { type: RuntimeDefault } }   # distroless nonroot
+      containers:
+        - name: app
+          image: ghcr.io/mierai/sample-app
+          ports: [{ containerPort: 8080, name: http }]
+          # Probe timeouts tolerate slowness (experiment api-slow-v3): with the default 1s, a 600ms network delay killed every
+          # api pod (liveness) and took it out of the Service (readiness) — slowness became an outage. Liveness only detects a
+          # stuck process: 5s x 6 (2 min) before a restart.
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5, timeoutSeconds: 3 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 20, timeoutSeconds: 5, failureThreshold: 6 }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

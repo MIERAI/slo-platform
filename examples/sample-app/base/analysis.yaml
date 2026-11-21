@@ -1,0 +1,39 @@
+# Canary analysis on real (synthetic) traffic: the canary pods' /hello error ratio and p95 latency, from Prometheus.
+# Any failure aborts the rollout. (Replaces the earlier HTTP probe, which only checked one request at a time.)
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: hello-ok
+spec:
+  args:
+    - name: namespace
+    - name: canary-hash
+  metrics:
+    - name: error-ratio
+      interval: 15s
+      count: 4
+      failureLimit: 0
+      consecutiveErrorLimit: 2
+      # no data yet (no request reached the canary) → NaN → treated as an error (counts toward consecutiveErrorLimit)
+      successCondition: len(result) > 0 && result[0] < 0.01
+      provider:
+        prometheus:
+          address: http://kps-prometheus.monitoring.svc.cluster.local:9090
+          # errors / total, with "no error series" counted as 0 errors:
+          #   no error → 0, all errors → 1, no traffic → empty (= Failed: no evidence, fail safe).
+          # (errors/total alone is empty when there is no error — that aborted a healthy canary in prod;
+          #  1 - success/total is empty when everything fails — it only "failed" by accident in the fault injection)
+          query: |
+            (sum(rate(http_requests_total{namespace="{{args.namespace}}",rollouts_pod_template_hash="{{args.canary-hash}}",route="GET /hello",code=~"5.."}[1m])) or vector(0))
+              / sum(rate(http_requests_total{namespace="{{args.namespace}}",rollouts_pod_template_hash="{{args.canary-hash}}",route="GET /hello"}[1m]))
+    - name: p95-latency
+      interval: 15s
+      count: 4
+      failureLimit: 0
+      consecutiveErrorLimit: 2
+      successCondition: len(result) > 0 && result[0] < 0.3
+      provider:
+        prometheus:
+          address: http://kps-prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="{{args.namespace}}",rollouts_pod_template_hash="{{args.canary-hash}}",route="GET /hello"}[1m])))

@@ -1,0 +1,10 @@
+# staging: the images are set by promotions
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: storefront-staging
+resources: [../../base]
+images:
+  - name: ghcr.io/mierai/storefront-web
+    newTag: "b9e57e4"
+  - name: ghcr.io/mierai/storefront-api
+    newTag: "b9e57e4"

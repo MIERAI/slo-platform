@@ -1,0 +1,8 @@
+# Voluntary disruptions (node drain, upgrade) take at most one Pod at a time: with 2 replicas one keeps serving.
+# maxUnavailable rather than minAvailable: with 1 replica (dev) a drain is still possible.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: sample-app }
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: sample-app } }
