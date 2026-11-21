@@ -1,0 +1,43 @@
+# sample-app — the quickstart: one HTTP service released as a canary (Argo Rollouts) with automatic abort.
+# Everything the platform does for it is derived from this file (format: ../storefront/app.yaml).
+name: sample-app
+signedImages: false              # the platform's image signature policy is optional; the example images are unsigned for it
+environments:
+  - { name: dev, trafficScale: 0.3 }
+  - name: prod
+    promotion: { from: dev, soak: 10m }
+    trafficScale: 1
+components:
+  - { name: sample-app, kustomize: overlays }        # overlays/<env>/kustomization.yaml
+services:
+  - { name: sample-app, image: ghcr.io/mierai/sample-app, component: sample-app, release: ci,
+      workload: { kind: Rollout, name: sample-app, container: app } }
+# Argo Rollouts adds rollouts-pod-template-hash to the stable/canary Service selectors during a rollout. Without this,
+# self-heal reverts it: the canary Service then also selects stable pods and the analysis can pass by hitting healthy
+# stable pods (seen in a fault experiment).
+ignoreDifferences:
+  - { group: "", kind: Service, jqPathExpressions: ['.spec.selector["rollouts-pod-template-hash"]'] }
+# Synthetic users (platform/traffic): a day profile with quiet nights and two bursts. Mostly greetings with a varying
+# name, some stale links (404: valid events, not errors). 90 rpm at the peak in prod (scale 1). The constant 2 req/s
+# of base/traffic.yaml come on top: they keep the canary analysis supplied at night.
+traffic:
+  peakRpm: 90
+  requests:
+    - { weight: 30, method: GET, service: sample-app, port: 8080, path: "/hello?name=user{rand}" }
+    - { weight: 2, method: GET, service: sample-app, port: 8080, path: /nope }                    # 404
+# SLOs: rendered per environment into Pyrra objectives and multi-window burn-rate alerts
+slos:
+  - name: hello-availability
+    description: GET /hello answered without a server error. Counts the synthetic traffic and the canary load tests
+      too; blind to requests that never reach a pod.
+    objective: 99.5
+    availability: { metric: http_requests_total, matchers: 'app="sample-app", route="GET /hello"', errors: 'code=~"5.."' }
+  - name: hello-latency
+    description: GET /hello answered within 250ms (a bucket edge of the app's histogram).
+    objective: 99
+    latency: { metric: http_request_duration_seconds, matchers: 'app="sample-app", route="GET /hello"', threshold: "0.25" }
+  - name: hello-probe
+    description: GET /hello answered 2xx within 5s when called from outside the pods (blackbox prober, every 15s). Sees
+      what the in-pod SLI cannot — no pod at all, a broken Service — but only at probe granularity.
+    objective: 99.5
+    probe: { service: sample-app, port: 8080, path: "/hello?name=probe" }

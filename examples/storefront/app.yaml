@@ -1,0 +1,84 @@
+# storefront — the reference application: the one place it is registered. Everything else is derived from this file:
+#   Argo CD Applications  one per component × environment (the platform's ApplicationSet), named <component>-<env>
+#   namespaces            <name>-<env>, created by Argo CD, labelled slo-platform/app and slo-platform/env
+#   SLOs and alerts       slos: below, per environment (component <name>-slo)
+#   synthetic users       traffic: below, per environment (scaled by trafficScale)
+#   fault experiments     experiments/*.yaml next to this file
+# Remove the application = remove this directory.
+name: storefront
+signedImages: false              # the platform's image signature policy is optional; the example images are unsigned for it
+environments:
+  - { name: dev, trafficScale: 0.3 }
+  - name: staging
+    promotion: { from: dev, soak: 5m }
+    trafficScale: 0.3
+  - name: prod
+    promotion: { from: staging, soak: 10m }
+    trafficScale: 1
+components:                      # how it is deployed: one Argo CD Application <component>-<env> each
+  - { name: storefront, kustomize: overlays }        # overlays/<env>/kustomization.yaml (web + api + Postgres)
+  - { name: storefront-worker, helm: worker }        # worker/chart + worker/values-<env>.yaml
+services:                        # released and promoted (its image) on its own
+  - { name: web, image: ghcr.io/mierai/storefront-web, component: storefront }
+  - { name: api, image: ghcr.io/mierai/storefront-api, component: storefront }
+  - { name: worker, image: ghcr.io/mierai/storefront-worker, component: storefront-worker }
+# Synthetic users (platform/traffic): a day profile with quiet nights and two bursts. Shares of the mix: 87% the page,
+# 9% orders (1 in 20 with an amount the API rejects: a 4xx, a valid event, not an error), 4% stale links (404).
+# 210 rpm at the peak in prod (scale 1): orders ≈ 6/min at dev's peak.
+traffic:
+  peakRpm: 210
+  requests:
+    - { weight: 65, method: GET, service: web, port: 8080, path: "/" }
+    - { weight: 7, method: POST, service: web, port: 8080, path: /orders, body: '{"amount": 100}',
+        badBody: '{"amount": 0}', badRate: 0.05 }
+    - { weight: 3, method: GET, service: web, port: 8080, path: /products/old-link }               # stale link: 404
+# SLOs: rendered per environment into Pyrra objectives and multi-window burn-rate alerts.
+# web is what users see (its SLOs page); api's own SLOs tell whether a web symptom is api's fault.
+slos:
+  - name: web-availability
+    description: The page served completely — not a 5xx, and not degraded (a page without the api's products is a
+      200 counted result="degraded"). Blind to requests that never reach a web pod.
+    objective: 99.5
+    availability: { metric: http_requests_total, matchers: 'app="web", route="GET /{$}"', errors: 'result!="ok"' }
+  - name: web-probe
+    description: The page answered 2xx within 5s when called from outside the pods (blackbox prober, every 15s). Sees a
+      web outage with no pod left to count it; does not see degraded pages (200).
+    objective: 99.5
+    probe: { service: web, port: 8080, path: "/" }
+  - name: web-latency
+    description: The page served within 500ms.
+    objective: 99
+    latency: { metric: http_request_duration_seconds, matchers: 'app="web", route="GET /{$}"', threshold: "0.5" }
+  - name: api-availability
+    description: GET /products answered without a server error, as measured by api itself (a request dropped before
+      it reaches api only shows in web's upstream_requests_total).
+    objective: 99.9
+    availability: { metric: http_requests_total, matchers: 'app="api", route="GET /products"', errors: 'result!="ok"' }
+  - name: api-latency
+    description: GET /products answered within 100ms.
+    objective: 99
+    latency: { metric: http_request_duration_seconds, matchers: 'app="api", route="GET /products"', threshold: "0.1" }
+  # The order pipeline (asynchronous shape: web takes orders, the worker processes them). Its SLIs are measured by
+  # web asking the database every 10s, not by the worker: a worker's metrics vanish with the last worker.
+  - name: order-intake
+    description: POST /orders answered without a server error (the order stored, or a 4xx for a bad one). Blind to
+      requests that never reach a web pod.
+    objective: 99.5
+    availability: { metric: http_requests_total, matchers: 'app="web", route="POST /orders"', errors: 'result!="ok"' }
+  - name: order-freshness
+    description: Every order older than 60s has been processed (share of time). The watermark is the creation time of
+      the oldest unprocessed order (now when there is none), measured by web asking the database every 10s (up to
+      ~30s of measurement lag counts inside the 60s). One stuck order is enough to make the pipeline stale. Absent while
+      web cannot ask the database (unknown is not fresh, but not stale either; order-intake pages then).
+    runbook: order-pipeline
+    objective: 99.5
+    age: { metric: orders_processed_through_timestamp_seconds, matchers: 'app="web"', max: 60s }
+  - name: order-completeness
+    description: Orders processed within 5 minutes of their creation, among the orders created. An order still
+      pending after 5 minutes is counted lost once (orders_overdue_total), even if processed later. Blind while web
+      cannot ask the database (counted when it can again).
+    runbook: order-pipeline
+    objective: 99.9
+    ratio:
+      errors: { metric: orders_overdue_total, matchers: 'app="web"' }
+      total: { metric: orders_created_total, matchers: 'app="web"' }

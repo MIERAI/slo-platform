@@ -1,0 +1,11 @@
+# Scrape web, api and the worker (:9090, storefront internal/obs; the worker's pods come from its Helm chart). The
+# SLOs are declared in storefront/app.yaml; label app tells the services apart.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: storefront
+spec:
+  selector: { matchExpressions: [{ key: app, operator: In, values: [web, api, worker] }] }
+  podTargetLabels: [app]
+  podMetricsEndpoints:
+    - { port: metrics, path: /metrics, interval: 15s }

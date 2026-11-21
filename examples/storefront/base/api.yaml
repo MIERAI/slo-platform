@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api }
+spec:
+  replicas: 2   # a pod lost (node drain, crash) must not be an outage: tested by experiments/pod-kill
+  selector: { matchLabels: { app: api } }
+  template:
+    metadata: { labels: { app: api } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: { type: RuntimeDefault } }
+      volumes: [{ name: faults, configMap: { name: storefront-faults, optional: true } }]
+      containers:
+        - name: api
+          image: ghcr.io/mierai/storefront-api
+          # fault switches for the experiments (storefront internal/fault): an experiment creates the ConfigMap
+          # storefront-faults (e.g. products-errors: "1"), deleting it turns the fault off; absent = no fault
+          env: [{ name: FAULTS_DIR, value: /etc/faults }]
+          volumeMounts: [{ name: faults, mountPath: /etc/faults, readOnly: true }]
+          ports: [{ containerPort: 8080, name: http }, { containerPort: 9090, name: metrics }]
+          # Probe timeouts tolerate slowness (experiment api-slow-v3): with the default 1s, a 600ms network delay killed every
+          # api pod (liveness) and took it out of the Service (readiness) — slowness became an outage. Liveness only detects a
+          # stuck process: 5s x 6 (2 min) before a restart.
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5, timeoutSeconds: 3 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 20, timeoutSeconds: 5, failureThreshold: 6 }
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 64Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api }
+spec:
+  selector: { app: api }
+  ports: [{ name: http, port: 8080, targetPort: http }]

@@ -1,0 +1,5 @@
+# Let kustomize's replicas transformer (overlays: replicas:) handle argoproj.io Rollout like a Deployment.
+# (images are already handled for any kind at spec/template/spec/containers[]/image)
+replicas:
+  - path: spec/replicas
+    kind: Rollout

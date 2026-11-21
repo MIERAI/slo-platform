@@ -1,0 +1,55 @@
+# Load test of the canary (k6), run by the analysis step of the Rollout as a Job: thresholds breached → k6 exits 99 →
+# the Job fails → the analysis fails → the rollout is aborted and traffic stays on the stable version.
+# 100 rps for 30s against the canary pod(s) only (Service sample-app-canary).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: load-test
+data:
+  hello.js: |
+    import http from 'k6/http';
+    import { check } from 'k6';
+    export const options = {
+      scenarios: {
+        steady: { executor: 'constant-arrival-rate', rate: 100, timeUnit: '1s', duration: '30s',
+                  preAllocatedVUs: 20, maxVUs: 200 },
+      },
+      thresholds: {
+        http_req_failed: ['rate<0.01'],
+        http_req_duration: ['p(95)<100'],          // ms; healthy canary: ~1ms
+        dropped_iterations: ['count<30'],           // the target rate could not be sustained
+      },
+      summaryTrendStats: ['med', 'p(95)', 'max'],
+    };
+    export default function () {
+      const r = http.get(`${__ENV.TARGET}/hello?name=k6`, { timeout: '5s' });
+      check(r, { 'status 200': (x) => x.status === 200 });
+    }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: load-test
+spec:
+  metrics:
+    - name: k6
+      provider:
+        job:
+          spec:
+            backoffLimit: 0              # a failed load test is a result, not a flake to retry
+            activeDeadlineSeconds: 180
+            template:
+              spec:
+                restartPolicy: Never
+                securityContext: { runAsNonRoot: true, runAsUser: 12345, seccompProfile: { type: RuntimeDefault } }
+                containers:
+                  - name: k6
+                    image: grafana/k6:2.3.0
+                    args: [run, --quiet, /scripts/hello.js]
+                    env: [{ name: TARGET, value: "http://sample-app-canary:8080" }]
+                    resources:
+                      requests: { cpu: 100m, memory: 64Mi }
+                      limits: { memory: 256Mi }
+                    securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+                    volumeMounts: [{ name: scripts, mountPath: /scripts, readOnly: true }]
+                volumes: [{ name: scripts, configMap: { name: load-test } }]

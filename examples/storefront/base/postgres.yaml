@@ -1,0 +1,29 @@
+# Orders (web writes them, the worker processes them): Postgres managed by CloudNativePG, one instance per
+# environment (a lab pipeline; prod would run 2). No backups: the orders are synthetic traffic
+# (to add them: examples/README.md).
+# The operator generates the login: Secret postgres-app (key uri → DATABASE_URL of web and worker). Services:
+# postgres-rw (primary). The table is created by web / worker at start (storefront internal/orders).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.10
+  storage: { size: 1Gi }
+  smartShutdownTimeout: 10      # pooled connections never disconnect: the default 180s stalled every restart
+  postgresql:
+    parameters: { shared_buffers: 32MB, max_connections: "50" }
+  resources:
+    requests: { cpu: 20m, memory: 96Mi }
+    limits: { memory: 256Mi }
+  bootstrap:
+    initdb: { database: storefront, owner: storefront }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata: { name: postgres }
+spec:
+  selector: { matchLabels: { cnpg.io/cluster: postgres } }
+  podMetricsEndpoints:
+    - { port: metrics, interval: 30s }

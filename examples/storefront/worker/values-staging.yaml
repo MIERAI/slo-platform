@@ -1,0 +1,4 @@
+# staging: image.tag is set by promotions
+image:
+  repository: ghcr.io/mierai/storefront-worker
+  tag: "b9e57e4"

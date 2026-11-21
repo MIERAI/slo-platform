@@ -1,0 +1,10 @@
+# dev: each service's release sets its own image (web and api are released independently)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: storefront-dev
+resources: [../../base]
+images:
+  - name: ghcr.io/mierai/storefront-web
+    newTag: "d16f12f"
+  - name: ghcr.io/mierai/storefront-api
+    newTag: "d16f12f"
