@@ -1,4 +1,4 @@
-# Set by apps/applicationset.yaml from the application's app.yaml (reference: docs/app-yaml.md).
+# Set by the ApplicationSet (platform/root/files/applicationset.yaml) from the application's app.yaml (reference: docs/app-yaml.md).
 app: ""            # application name
 env: ""            # environment; the namespace is the release namespace (<app>-<env>)
 slos: []

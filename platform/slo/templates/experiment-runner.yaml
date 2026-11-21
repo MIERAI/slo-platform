@@ -2,7 +2,7 @@
 What the fault-experiment runner (ServiceAccount experiment-runner in slo-experiments, platform/experiments) may do in
 this namespace — rendered here, per application × environment, so that no platform file lists namespaces:
   Chaos Mesh PodChaos / NetworkChaos     the faults (Chaos Mesh only injects into namespaces annotated
-                                          chaos-mesh.org/inject=enabled, which apps/applicationset.yaml sets)
+                                          chaos-mesh.org/inject=enabled, which the ApplicationSet sets)
   Jobs                                    an experiment's `load` (what the fault needs to matter, e.g. writes)
   ConfigMap <app>-faults                  the application's own fault switch, by convention (docs/app-yaml.md);
                                           create cannot be limited to a name (RBAC): any new ConfigMap

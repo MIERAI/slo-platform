@@ -1,8 +1,9 @@
 # app.yaml reference
 
-One `app.yaml` per application (`examples/<app>/app.yaml` in this repository; your instance repository from P2 on) is
-the one place an application is registered. The platform derives everything else from it
-([apps/applicationset.yaml](../apps/applicationset.yaml), mirrored by [scripts/render.py](../scripts/render.py)):
+One `app.yaml` per application (`apps/<app>/app.yaml` in your instance repository; `examples/<app>/app.yaml` in this
+repository) is the one place an application is registered. The platform derives everything else from it (the
+ApplicationSet of the root chart, [platform/root/files/applicationset.yaml](../platform/root/files/applicationset.yaml),
+mirrored by [scripts/render.py](../scripts/render.py)):
 
 | From | Argo CD Application | Source |
 |---|---|---|
@@ -99,8 +100,8 @@ environments:
   environment.
 - `body` is sent as JSON (`Content-Type: application/json`); `badBody` replaces it for a share `badRate` of the
   requests (default 0.05). `{rand}` in `path` or a body becomes a random number 0..999 on every request.
-- The day's shape is a platform default (a real 24-hour day aligned to the clock, UTC); `platform.yaml` sets the time
-  zone from P2 on.
+- The day's shape comes from `platform.yaml`: a day of `traffic.dayMinutes` (default 1440, a real day aligned to the
+  clock) in `timezone` (its standard offset: summer time is ignored here).
 
 ## Fault experiments and the fault switch
 

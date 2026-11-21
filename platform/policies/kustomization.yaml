@@ -1,5 +1,5 @@
 # Optional admission baseline (Kyverno, CEL) for every application namespace: namespaces with the label
-# slo-platform/app (set by apps/applicationset.yaml). Platform namespaces (upstream manifests) are not matched.
+# slo-platform/app (set by the ApplicationSet, platform/root). Platform namespaces (upstream manifests) are not matched.
 # Rules are written against Pods; Kyverno autogen applies them to the controllers too, so a violating Deployment is
 # rejected at sync time (Argo CD shows the message) instead of failing later when its Pods are created.
 # Rollout on an existing cluster: Audit first (PolicyReports, `kubectl get policyreports -A`), fix, then Deny.

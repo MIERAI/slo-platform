@@ -5,7 +5,7 @@
 #   write its results ConfigMap                                                       only its own namespace
 # Faults, loads and the application fault switch in an application's namespaces: a Role + RoleBinding rendered per
 # application × environment by the slo chart (platform/slo, experimentRunner) — never a list of namespaces here.
-# Chaos Mesh only injects into namespaces annotated chaos-mesh.org/inject=enabled (set by apps/applicationset.yaml).
+# Chaos Mesh only injects into namespaces annotated chaos-mesh.org/inject=enabled (set by the ApplicationSet, platform/root).
 apiVersion: v1
 kind: ServiceAccount
 metadata: { name: experiment-runner, namespace: slo-experiments }

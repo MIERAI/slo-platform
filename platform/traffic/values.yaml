@@ -1,15 +1,16 @@
-# Set by apps/applicationset.yaml from the application's app.yaml `traffic` (reference: docs/app-yaml.md).
+# Set by the ApplicationSet (platform/root/files/applicationset.yaml) from the application's app.yaml `traffic`
+# (reference: docs/app-yaml.md) and, for `day`, from platform.yaml (traffic.dayMinutes, timezone).
 app: ""             # application name
 env: ""             # environment; the namespace is the release namespace (<app>-<env>)
 scale: 1            # the environment's trafficScale (0 = no traffic: the ApplicationSet renders nothing then)
 peakRpm: 300        # requests per minute at the day's peak, at scale 1
 requests: []        # [{weight, method, service, port, path, body?, badBody?, badRate?}] → http://<service>.<ns>.svc:<port><path>
-# The day's shape (platform defaults; platform.yaml overrides them from P2 on).
+# The day's shape (platform defaults; minutes and tzOffsetHours come from platform.yaml).
 day:
   minutes: 1440     # a real day; less compresses one (e.g. 60: one day per hour, for quick tests)
   days: 1           # days per k6 run, then the container restarts and picks the clock up again
   alignClock: true  # start where the wall clock is in its day: the night is the real night
-  tzOffsetHours: 0  # the users' time zone, hours from UTC
+  tzOffsetHours: 0  # the users' time zone, hours from UTC (timezone's standard offset: no summer time)
   burstHours: [12, 20]
 image: grafana/k6:1.8.2
 resources:

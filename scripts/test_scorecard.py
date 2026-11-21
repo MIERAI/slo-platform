@@ -58,8 +58,9 @@ class Declarations(unittest.TestCase):
         self.assertEqual(rows[1]["anchor"], "latency")
         self.assertEqual(rows[0]["namespace"], "shop-prod")
 
-    @unittest.skipUnless(sc.render is not None and os.path.exists(os.path.join(sc.ROOT, "platform/slo/values.yaml")),
-                         "needs scripts/render.py and platform/slo (the platform)")
+    @unittest.skipUnless(sc.render is not None and os.path.exists(os.path.join(sc.ROOT, "platform/slo/values.yaml"))
+                         and os.path.isdir(os.path.join(sc.ROOT, "examples", "storefront")),
+                         "needs scripts/render.py, platform/slo (the platform) and the examples")
     def test_repository_slos_load(self):
         """This repository: every example's prod SLOs (no cluster needed)."""
         import warnings

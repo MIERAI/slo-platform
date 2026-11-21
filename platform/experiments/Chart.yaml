@@ -1,0 +1,11 @@
+# The scheduled fault-experiment regression (lab clusters only: the root chart installs it where role is lab, and the
+# runner refuses to start unless every node carries the label slo-platform/lab=true). Every experiment of the
+# instance runs daily (templates/cronjob.yaml), its result becomes metrics (templates/exporter.yaml:
+# slo_experiment_*), and a ticket says when it fails or stops running (templates/rules.yaml). Runner rights:
+# templates/rbac.yaml (cluster-wide and its own namespace); per application namespace from the slo chart
+# (platform/slo). Namespace slo-experiments (+ a Role in monitoring).
+apiVersion: v2
+name: experiments
+description: The daily fault-experiment regression of slo-platform (lab clusters)
+type: application
+version: 0.1.0

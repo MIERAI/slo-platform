@@ -1,6 +1,7 @@
-"""Application descriptors (examples/<app>/app.yaml; reference: docs/app-yaml.md): the one place an application is
-registered. The ApplicationSet (apps/applicationset.yaml) derives the Argo CD Applications from them; the scripts
-derive the same here — which file holds an image in an environment, and how to render each Application.
+"""Application descriptors (apps/<app>/app.yaml of an instance repository, examples/<app>/app.yaml here; reference:
+docs/app-yaml.md): the one place an application is registered. The ApplicationSet (platform/root/files/
+applicationset.yaml) derives the Argo CD Applications from them; the scripts derive the same here — which file holds an
+image in an environment, and how to render each Application.
 
 Needs PyYAML (CI: the python3-yaml package; locally: `uv run --with pyyaml …` or pip).
 """
@@ -13,7 +14,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required (apt install python3-yaml, or pip install pyyaml)")
 
-APPS = "examples"   # where app.yaml files live: keep in step with the git generator of apps/applicationset.yaml
+APPS = "apps"   # where app.yaml files live in an instance: keep in step with the ApplicationSet's git generator
 
 
 def load(app, root="."):
@@ -21,14 +22,16 @@ def load(app, root="."):
     f = os.path.join(root, app, "app.yaml")
     if not os.path.exists(f):
         return None
-    d = yaml.safe_load(open(f))
+    with open(f) as fh:
+        d = yaml.safe_load(fh)
     d["dir"] = app
     return d
 
 
-def all_apps(root="."):
+def all_apps(root=".", apps=APPS):
+    """Every descriptor under <root>/<apps>/*/app.yaml (an instance: apps; this repository: examples)."""
     return [load(os.path.relpath(os.path.dirname(f), root), root)
-            for f in sorted(glob.glob(os.path.join(root, APPS, "*", "app.yaml")))]
+            for f in sorted(glob.glob(os.path.join(root, apps, "*", "app.yaml")))]
 
 
 def component_of(d, image):
@@ -58,8 +61,12 @@ def traffic_envs(d):
     return [e for e in d["environments"] if e.get("trafficScale", 1) != 0] if "traffic" in d else []
 
 
-def applications(d, root="."):
-    """What the ApplicationSet makes of descriptor d (keep in step with apps/applicationset.yaml)."""
+def applications(d, root=".", product=None, day=None):
+    """What the ApplicationSet makes of descriptor d (keep in step with platform/root/files/applicationset.yaml).
+    root: the instance (d's components); product: the product checkout (platform/slo, platform/traffic; default root);
+    day: the traffic chart's day settings from platform.yaml ({minutes, tzOffsetHours}). Each entry's "root" is the
+    checkout its path is relative to."""
+    product = root if product is None else product
     out = []
     for c in d["components"]:
         for e in d["environments"]:
@@ -69,11 +76,11 @@ def applications(d, root="."):
             else:
                 path, values = f"{d['dir']}/{c['kustomize']}/{env}", []
             out.append({"name": f"{c['name']}-{env}", "path": path, "namespace": f"{d['name']}-{env}", "values": values,
-                        "release": c["name"], "enforced": True})
+                        "release": c["name"], "enforced": True, "root": root})
     if "slos" in d:  # the platform's SLO chart, values from app.yaml
         for e in d["environments"]:
             out.append({"name": f"{d['name']}-slo-{e['name']}", "path": "platform/slo", "namespace": f"{d['name']}-{e['name']}",
-                        "values": [], "release": f"{d['name']}-slo", "enforced": True,
+                        "values": [], "release": f"{d['name']}-slo", "enforced": True, "root": product,
                         "values_object": {"app": d["name"], "env": e["name"], "slos": d["slos"]}})
     for e in traffic_envs(d):  # the platform's synthetic users, values from app.yaml
         v = {"app": d["name"], "env": e["name"], "requests": d["traffic"]["requests"]}
@@ -81,7 +88,9 @@ def applications(d, root="."):
             v["peakRpm"] = d["traffic"]["peakRpm"]
         if "trafficScale" in e:
             v["scale"] = e["trafficScale"]
+        if day is not None:
+            v["day"] = dict(day)
         out.append({"name": f"{d['name']}-traffic-{e['name']}", "path": "platform/traffic",
                     "namespace": f"{d['name']}-{e['name']}", "values": [], "release": f"{d['name']}-traffic",
-                    "enforced": True, "values_object": v})
+                    "enforced": True, "values_object": v, "root": product})
     return out

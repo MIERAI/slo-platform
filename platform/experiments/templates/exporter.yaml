@@ -1,5 +1,12 @@
 # The results as metrics (exporter.py reads the ConfigMap experiment-results at every scrape; the runner writes it).
 # honorLabels: the metrics carry the experiment's namespace, not the exporter's.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: experiment-exporter, namespace: slo-experiments }
+data:
+  exporter.py: |
+{{ .Files.Get "exporter.py" | indent 4 }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata: { name: experiment-exporter, namespace: slo-experiments }
@@ -7,7 +14,9 @@ spec:
   replicas: 1
   selector: { matchLabels: { app: experiment-exporter } }
   template:
-    metadata: { labels: { app: experiment-exporter } }
+    metadata:
+      labels: { app: experiment-exporter }
+      annotations: { slo-platform/exporter: {{ .Files.Get "exporter.py" | sha256sum | trunc 16 | quote }} }   # restart on change
     spec:
       automountServiceAccountToken: false
       securityContext: { runAsNonRoot: true, runAsUser: 65534, seccompProfile: { type: RuntimeDefault } }

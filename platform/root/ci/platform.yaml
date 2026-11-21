@@ -1,0 +1,21 @@
+# A platform.yaml as init writes it (two clusters, everything optional turned on) for scripts/validate.sh, which
+# renders the root chart once per cluster (--set cluster=<name>) and the instance assembled from examples/
+# (scripts/render.py).
+apiVersion: slo-platform/v1
+product: { repo: https://github.com/MIERAI/slo-platform.git, version: main }
+instance: { repo: https://github.com/your-org/slo-instance.git, revision: main }
+timezone: Asia/Kolkata               # a half-hour offset: TZ_OFFSET_HOURS 5.5
+language: en
+clusters:
+  prod:
+    role: prod
+    runtime: k3s
+    objectStorage: in-cluster
+  lab:
+    role: lab
+    runtime: kind
+optional: { policies: true }
+grafana: { adminSecret: grafana-admin }
+regression: { schedule: "0 9 * * *" }
+traffic: { dayMinutes: 1440 }
+notify: {}

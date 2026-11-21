@@ -1,0 +1,14 @@
+# The root chart's values are the instance's platform.yaml (schema and defaults: values.schema.json; reference:
+# docs/configuration.md) plus `cluster`, which the root Application passes as a Helm parameter. The defaults:
+apiVersion: slo-platform/v1
+product: { repo: https://github.com/MIERAI/slo-platform.git, version: main }   # the platform, at a git ref
+instance: { repo: "", revision: main }   # the instance repository (platform.yaml, apps/): required
+timezone: Etc/UTC                        # IANA name (files/timezones.yaml)
+language: en
+clusters: {}                             # <name>: { role: prod | lab, runtime: generic, objectStorage: none }
+optional: { policies: false }
+grafana: { adminSecret: grafana-admin }
+regression: { schedule: "0 9 * * *" }
+traffic: { dayMinutes: 1440 }
+notify: {}
+cluster: ""                              # which of `clusters` this rendering is for (required)
