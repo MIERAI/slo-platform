@@ -2,7 +2,11 @@
 
 SLOs you can trust. Declare service level objectives next to your application, get multi-window burn-rate alerts,
 and **prove those alerts work**: a fault experiment library runs every day on a lab cluster and checks that each alert
-fires when it should — and that normal traffic pages nobody. Error budgets then gate promotions to production.
+fires when it should — and that normal traffic pages nobody.
+
+![A fault experiment: every sample-app pod is killed, the probe SLO pages after 2.6 minutes as predicted, the alert resolves after the fault — PASS](docs/demo/demo.gif)
+
+<sub>A real run on a fresh kind cluster, replayed with the waits compressed (`docs/demo/`).</sub>
 
 > **Status: v0.2.0 (alpha).** Install from one `platform.yaml`: `slo-platform init` creates your instance repository,
 > `bootstrap/tofu` installs a released version into kind or an existing cluster, notifications go to ntfy / Slack /
@@ -25,14 +29,48 @@ outage — until the outage. An alert that has never fired is a hope, not a safe
 | **Declare** | SLOs in your application's `app.yaml` — availability, latency, probe, freshness (age), ratio, bool — one declaration for every environment |
 | **Alert** | Multi-window, multi-burn-rate alerts (page / ticket), "SLI absent" tickets, sensible routing and inhibition |
 | **Verify** | Fault experiments with predictions committed before the run (which alert fires within how long, what stays quiet), run daily as a regression on a lab cluster; a negative test proves normal traffic pages nobody |
-| **Gate** | Error budget left decides whether a promotion to prod needs a reason, or only fixes may ship |
+| **Gate** *(planned)* | Error budget left decides whether a promotion to prod needs a reason, or only fixes may ship — today the budgets are there (Pyrra); the promotion gate itself is not part of the platform yet |
 | **Watch the watcher** | External probes from outside the cluster and a dead man's switch for the alerting pipeline itself |
 
-## How it works (target design)
+## How it works
 
-- You install the platform into your cluster(s) from a **versioned release** and keep only your own configuration in
+```mermaid
+flowchart LR
+  subgraph repo["your instance repository"]
+    cfg["platform.yaml<br/>(the one config)"]
+    apps["apps/&lt;app&gt;/app.yaml<br/>SLOs · synthetic users"]
+    exp["experiments<br/>predictions, committed first"]
+  end
+  rel(["slo-platform<br/>release vX.Y.Z"])
+
+  subgraph lab["lab cluster"]
+    lgit["Argo CD:<br/>platform + apps"]
+    reg["daily regression<br/>(Chaos Mesh faults)"]
+    lprom["Prometheus + Pyrra<br/>burn-rate alerts"]
+  end
+
+  subgraph prod["prod cluster"]
+    pgit["Argo CD:<br/>platform + apps"]
+    pprom["Prometheus + Pyrra<br/>burn-rate alerts"]
+    am["Alertmanager"]
+  end
+
+  cfg --> lgit & pgit
+  apps --> lgit & pgit
+  rel --> lgit & pgit
+  exp --> reg
+  reg -- "inject the fault" --> lgit
+  lprom -- "did the predicted alert fire in time?<br/>did anything else page?" --> reg
+  pprom --> am
+  am -- "page / ticket" --> people["ntfy · Slack · Telegram<br/>email · webhook …"]
+  am -. "Watchdog every minute" .-> dms["dead man's switch"]
+```
+
+- You install the platform into your clusters from a **versioned release** and keep only your own configuration in
   your own repository: one `platform.yaml` (see [platform.example.yaml](platform.example.yaml)) and one `app.yaml`
   per application. Upgrading = changing the version.
+- The **same** platform and applications run on both clusters. Faults only ever go to the lab (its nodes must carry
+  `slo-platform/lab=true`, or the runner refuses): an alert that fires there fires the same way in prod.
 - Under the hood: Argo CD (GitOps), kube-prometheus-stack, Pyrra (SLO rules), blackbox exporter, Chaos Mesh, k6.
 
 ## Layout
