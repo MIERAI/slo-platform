@@ -75,6 +75,11 @@ class Init(Tmp):
         self.assertIn("cluster=lab", read(os.path.join(d, "README.md")))
         self.assertEqual(self.check(d), [])
 
+    def test_state_and_secret_dirs_owner_only(self):
+        d = self.instance()
+        for x in (".tofu", ".secrets"):
+            self.assertEqual(os.stat(os.path.join(d, x)).st_mode & 0o777, 0o700, x)
+
     def test_results_not_copied(self):
         os.makedirs(os.path.join(self.product, "examples", "sample-app", "experiments", "results"))
         open(os.path.join(self.product, "examples", "sample-app", "experiments", "results", "x.md"), "w").close()

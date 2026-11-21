@@ -638,6 +638,10 @@ def init(target, owner, repo, clusters, examples, version, timezone="Etc/UTC", p
             open(os.path.join(target, "apps", ".gitkeep"), "w").close()
         with open(os.path.join(target, ".gitignore"), "w") as f:
             f.write(GITIGNORE)
+        # bootstrap writes state (with secrets), kubeconfigs and passwords here: owner-only before anything lands in them
+        for d in (".tofu", ".secrets"):
+            os.makedirs(os.path.join(target, d), mode=0o700, exist_ok=True)
+            os.chmod(os.path.join(target, d), 0o700)
         note = ("Secrets (optional): without `secrets/<cluster>.sops.yaml` bootstrap generates throwaway values (fine "
                 "for a lab). To keep your own (SOPS + age): docs/configuration.md of slo-platform.")
         if age:
