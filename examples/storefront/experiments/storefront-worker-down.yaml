@@ -1,0 +1,27 @@
+hypothesis: >-
+  Every worker fails (a bad release, a crash loop). Orders are still accepted (web writes them) but nothing processes
+  them. The worker's own metrics vanish with it; the pipeline SLIs are exported by web, so they must still see it.
+  Prediction, written before the run: order-freshness pages — the next order after the failure (dev: one every
+  10-20s by day, minutes at night) is 60s old ~1.5 min later (check 10s + scrape 15s + rule 15s), then 4.2 min of
+  stale samples make 7% of the hour (14x a 0.5% budget), plus for 2m: ~8 min by day. order-completeness pages too:
+  orders become overdue 5 min after creation, the first one already exceeds 14x a 0.1% budget, plus for 2m: ~8 min.
+  order-intake and the page SLOs stay quiet. After the fault the backlog drains in seconds.
+namespace: storefront-dev
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: { name: worker-all-down }
+    spec:
+      action: pod-failure
+      mode: all
+      selector: { labelSelectors: { app: worker } }
+      duration: 30m
+timeout: 14m
+expect:
+  fire:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-freshness, severity: page, long: 1h }, within: 12m }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-completeness, severity: page, long: 1h }, within: 12m }
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-intake } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-web-availability } }
+recover: 15m

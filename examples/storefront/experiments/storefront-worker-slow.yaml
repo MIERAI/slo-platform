@@ -1,0 +1,29 @@
+hypothesis: >-
+  The workers' path to the database is slow: every packet from Postgres to the workers is delayed by 2s (selected on
+  the Postgres side: from the workers' side the packets go to the Service IP, which Chaos Mesh's pod-IP target does
+  not match). A worker needs 4 round trips per order (begin, claim, done, commit): ~8s per order, ~15/min for two,
+  above dev's arrivals (≤ 6/min; a 3x burst for one minute drains in about a minute). Slower, but within the
+  objective: an order waits ≤ ~16s, far under the 60s freshness threshold and the 5 min completeness deadline.
+  Prediction, written before the run: nothing pages (the order_processing_delay_seconds histogram shows the slowness:
+  a dashboard, not a page). web is not delayed: intake quiet.
+namespace: storefront-dev
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: NetworkChaos
+    metadata: { name: worker-db-delay }
+    spec:
+      action: delay
+      mode: all
+      selector: { labelSelectors: { cnpg.io/cluster: postgres } }
+      direction: to
+      target:
+        mode: all
+        selector: { labelSelectors: { app: worker } }
+      delay: { latency: 2s, jitter: 0ms }
+      duration: 30m
+timeout: 15m
+hold: 15m
+expect:
+  fire: []
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev } }

@@ -1,0 +1,21 @@
+hypothesis: >-
+  One of the two workers fails for 10 minutes (crash loop, a lost node). The other one keeps claiming orders (FOR
+  UPDATE SKIP LOCKED: no coordination needed); an order the failed worker held is rolled back to pending and taken
+  by the other. One worker handles ~10 orders/s (100ms of work), dev peaks at ~6/min: the backlog stays empty.
+  Prediction, written before the run: nothing pages — freshness, completeness and intake stay quiet.
+namespace: storefront-dev
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: { name: worker-one-down }
+    spec:
+      action: pod-failure
+      mode: one
+      selector: { labelSelectors: { app: worker } }
+      duration: 10m
+timeout: 10m
+hold: 10m
+expect:
+  fire: []
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev } }

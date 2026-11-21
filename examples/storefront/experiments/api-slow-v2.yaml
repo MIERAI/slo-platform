@@ -1,0 +1,29 @@
+hypothesis: >-
+  api's packets are delayed by 300ms (a slow network path or an overloaded node). The first version delayed them by
+  800ms: a web → api call takes several delayed packets, so every call exceeded web's 2s timeout and the pages lost
+  their products — an outage, not slowness (web-availability paged). Prediction, written before the run: at 300ms a
+  call takes ~0.6-1s, under the 2s timeout, over web's 0.5s latency threshold; web-latency (99% under 0.5s: every
+  request bad, 14x a 1% budget) pages within ~5 min; web-availability and web-probe stay quiet (pages complete,
+  slowly). api's own latency SLO does not see network delay (it measures inside api): quiet.
+namespace: storefront-prod
+skip: "superseded by api-slow-v3 (300ms: one delayed packet per kept-alive call, 0.30s, under the 0.5s threshold; the fault did not bite)"
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: NetworkChaos
+    metadata: { name: api-delay }
+    spec:
+      action: delay
+      mode: all
+      selector: { labelSelectors: { app: api } }
+      delay: { latency: 300ms, jitter: 30ms }
+      duration: 30m
+effect: { query: 'sum(rate(upstream_request_duration_seconds_sum{namespace="storefront-prod"}[1m])) / sum(rate(upstream_request_duration_seconds_count{namespace="storefront-prod"}[1m])) > 0.5', within: 3m }   # web → api calls take over 0.5s on average
+timeout: 12m
+expect:
+  fire:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-prod, slo: storefront-web-latency, severity: page, long: 1h }, within: 10m }
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-prod, slo: storefront-web-availability } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-prod, slo: storefront-web-probe } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-prod, slo: storefront-api-latency } }
+recover: 15m

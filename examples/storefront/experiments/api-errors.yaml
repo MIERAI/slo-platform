@@ -1,0 +1,23 @@
+hypothesis: >-
+  api answers every GET /products with a 503 (a bad release of api, or api's own dependency failing), switched on by
+  the application fault switch (storefront internal/fault; the first version used HTTPChaos, which cannot run on kind).
+  Users get pages without products: web's availability SLO must page. Unlike a broken proxy, api counts its own 503s,
+  so api-availability (99.9%) pages too — both in storefront-staging, one announcement per service. The page itself
+  still answers 200: web-probe (2xx from outside) and web-latency must stay quiet. The fault reaches the pods when
+  kubelet updates the ConfigMap volume (≤ ~90s).
+namespace: storefront-staging
+fault:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata: { name: storefront-faults }
+    data: { products-errors: "1" }
+effect: { query: 'sum(rate(upstream_requests_total{namespace="storefront-staging", code="503"}[1m])) > 0', within: 3m }   # web sees api's 503s
+timeout: 14m
+expect:
+  fire:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-staging, slo: storefront-web-availability, severity: page, long: 1h }, within: 12m }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-staging, slo: storefront-api-availability, severity: page, long: 1h }, within: 12m }
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-staging, slo: storefront-web-probe } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-staging, slo: storefront-web-latency } }
+recover: 15m

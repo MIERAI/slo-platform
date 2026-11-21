@@ -1,0 +1,23 @@
+hypothesis: >-
+  api's packets are delayed by 800ms (a slow network path or an overloaded node). Pages still render (web waits up to
+  2s) but slowly; web's latency SLO (99% under 500ms) must page, its availability SLO must not.
+namespace: storefront-prod
+skip: "superseded by api-slow-v2 (800ms per packet made every web → api call exceed web's 2s timeout: an outage, not slowness)"
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: NetworkChaos
+    metadata: { name: api-delay }
+    spec:
+      action: delay
+      mode: all
+      selector: { labelSelectors: { app: api } }
+      delay: { latency: 800ms, jitter: 50ms }
+      duration: 30m
+effect: { query: 'sum(rate(upstream_request_duration_seconds_sum{namespace="storefront-prod"}[1m])) / sum(rate(upstream_request_duration_seconds_count{namespace="storefront-prod"}[1m])) > 0.5', within: 3m }   # web → api calls take over 0.5s on average
+timeout: 12m
+expect:
+  fire:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-prod, slo: storefront-web-latency, severity: page, long: 1h }, within: 10m }
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-prod, slo: storefront-web-availability } }
+recover: 15m

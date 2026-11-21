@@ -1,0 +1,34 @@
+hypothesis: >-
+  Postgres cannot be reached by web and the workers (every packet from Postgres to them is dropped; Postgres itself
+  and its probes are fine). POST /orders cannot store orders: 503 after the 2s timeout. The page (GET /) does not use
+  the database. Prediction, written before the run: order-intake pages (100% errors: 4.2 min to reach 7% of the
+  hour, plus for 2m: ~7 min). The freshness gauge is unset while web cannot ask the database, so order-freshness does
+  not burn; its SLI goes absent → SLOMetricAbsent (ticket) after ~6.5 min (for 6m). order-completeness stays quiet
+  (nothing is created, nothing is checked). web-availability and web-probe stay quiet.
+namespace: storefront-dev
+skip: "superseded by storefront-db-unreachable-v2 (SLOMetricAbsent within 10m was too tight: fired at 8.7 min, seen by the runner at 10.9)"
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: NetworkChaos
+    metadata: { name: db-unreachable }
+    spec:
+      action: loss
+      mode: all
+      selector: { labelSelectors: { cnpg.io/cluster: postgres } }
+      direction: to
+      target:
+        mode: all
+        selector: { expressionSelectors: [{ key: app, operator: In, values: [web, worker] }] }
+      loss: { loss: "100" }
+      duration: 30m
+timeout: 12m
+expect:
+  fire:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-intake, severity: page, long: 1h }, within: 10m }
+    - { alert: SLOMetricAbsent, labels: { namespace: storefront-dev, slo: storefront-order-freshness }, within: 10m }
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-freshness } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-completeness } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-web-availability } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-web-probe } }
+recover: 15m
