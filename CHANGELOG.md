@@ -4,6 +4,10 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+### Notes
+- P5: the reference installation (two k3s clusters, prod and lab) runs v0.1.1 from an existing GitOps repository
+  (`instance.apps: "."`, extras, per-cluster components); switched in ~40 s per cluster with no resource recreated.
+
 ### Added
 - `clusters.<name>.components`: per-cluster component settings, deep-merged over `components` (clusters differ).
 - Generated fault experiments (P6): `scripts/generate-experiments.py` (and `slo-platform experiments generate|check`)
