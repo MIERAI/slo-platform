@@ -41,8 +41,8 @@ and the comments in [storefront/app.yaml](storefront/app.yaml)). Their images ar
 
 Both `app.yaml`s declare `traffic`: the platform runs a k6 Deployment per application and environment that follows a
 day (quiet nights, a lunch and an evening peak, two bursts of 3× the peak) and makes mistakes (stale links, bad
-orders: 4xx, valid events, not errors). `peakRpm` is the peak in an environment with `trafficScale: 1` (prod); dev and
-staging get 0.3 of it. storefront 210 + sample-app 90 = 300 rpm at prod's peak.
+orders: 4xx, valid events, not errors). `peakRpm` is the peak in an environment with `trafficScale: 1` (prod); dev gets
+0.3 of it, storefront's staging 0.43. storefront 210 + sample-app 90 = 300 rpm at prod's peak.
 
 ## Reaching them
 

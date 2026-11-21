@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Every unit test of the repository: scripts/test_*.py and platform/**/test_*.py, in parallel (each file is its own
-# process; the tests use temporary directories, never the cluster). Needs python3 with PyYAML
+# Every unit test of the repository: scripts/test_*.py, bin/test_*.py and platform/**/test_*.py, in parallel (each
+# file is its own process; the tests use temporary directories, never the cluster). Needs python3 with PyYAML
 # (apt install python3-yaml, pip install pyyaml, or: uv run --with pyyaml scripts/test.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -8,7 +8,7 @@ python3 -I -c 'import yaml' 2>/dev/null || { echo "✗ PyYAML is required (pip i
 
 tests=()
 while IFS= read -r f; do tests+=("$f"); done < <(
-  { ls scripts/test_*.py 2>/dev/null; find platform -name 'test_*.py' -type f 2>/dev/null; } | sort -u)
+  { ls scripts/test_*.py bin/test_*.py 2>/dev/null; find platform -name 'test_*.py' -type f 2>/dev/null; } | sort -u)
 if [ "${#tests[@]}" -eq 0 ]; then echo "no tests found" >&2; exit 1; fi
 
 logs=$(mktemp -d)

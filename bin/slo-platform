@@ -1,0 +1,753 @@
+#!/usr/bin/env python3
+"""slo-platform: create, check and upgrade an instance repository (docs/configuration.md).
+
+  slo-platform init <dir> --owner <gh-owner> --repo <name> [--cluster name:role:runtime[:objectStorage] ...]
+                    [--example <app> ...] [--version <ref>] [--timezone <IANA>] [--product-repo <url>]
+                    [--age [--age-key-file <path>]]
+  slo-platform check [<dir>]
+  slo-platform upgrade --version <ref> [<dir>]
+
+The instance repository holds only configuration: platform.yaml, apps/<app>/ (app.yaml, manifests, experiments),
+secrets/<cluster>.sops.yaml, .sops.yaml. The platform itself comes from the product repository at product.version.
+
+`check` validates platform.yaml against platform/root/values.schema.json of this product checkout when it exists (the
+same file Helm validates the root chart's values with), else against the built-in SCHEMA below that mirrors it; then
+every app.yaml and every experiment. Needs Python 3.9+ and PyYAML.
+"""
+import argparse
+import copy
+import glob
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    sys.exit("PyYAML is required (apt install python3-yaml, or pip install pyyaml)")
+
+PRODUCT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # this checkout of slo-platform
+PRODUCT_REPO = "https://github.com/MIERAI/slo-platform.git"
+SCHEMA_FILE = os.path.join("platform", "root", "values.schema.json")
+VALUES_FILE = os.path.join("platform", "root", "values.yaml")
+DEFAULT_AGE_KEY = os.path.join("~", ".config", "sops", "age", "keys.txt")
+
+NAME = r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"            # a DNS label (namespaces are <app>-<env>)
+REF = r"^[A-Za-z0-9][A-Za-z0-9._/-]*$"                # a git ref: branch or tag
+DURATION = re.compile(r"^([0-9]+(ms|s|m|h|d|w|y))+$")
+
+# platform.yaml (apiVersion slo-platform/v1): the built-in mirror of platform/root/values.schema.json, used when this
+# checkout has no schema file. JSON schema, the subset validate() implements.
+SCHEMA = {
+    "type": "object",
+    "required": ["apiVersion", "product", "instance", "clusters"],
+    "additionalProperties": False,
+    "properties": {
+        "apiVersion": {"const": "slo-platform/v1"},
+        "product": {"type": "object", "required": ["repo", "version"], "additionalProperties": False, "properties": {
+            "repo": {"type": "string", "pattern": r"^(https://|ssh://|git@)\S+$"},
+            "version": {"type": "string", "pattern": REF}}},
+        "instance": {"type": "object", "required": ["repo", "revision"], "additionalProperties": False, "properties": {
+            "repo": {"type": "string", "pattern": r"^(https://|ssh://|git@)\S+$"},
+            "revision": {"type": "string", "pattern": REF}}},
+        "timezone": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$"},
+        "language": {"enum": ["en", "zh", "ja"]},
+        "clusters": {"type": "object", "minProperties": 1, "propertyNames": {"pattern": NAME, "maxLength": 40},
+                     "additionalProperties": {
+                         "type": "object", "required": ["role"], "additionalProperties": False,
+                         "properties": {
+                             "role": {"enum": ["prod", "lab"]},
+                             "runtime": {"enum": ["kind", "k3s", "generic"]},
+                             "objectStorage": {"enum": ["none", "in-cluster"]}}}},
+        "optional": {"type": "object", "additionalProperties": False,
+                     "properties": {"policies": {"type": "boolean"}}},
+        "grafana": {"type": "object", "additionalProperties": False,
+                    "properties": {"adminSecret": {"type": "string", "pattern": NAME}}},
+        "regression": {"type": "object", "additionalProperties": False, "properties": {
+            "schedule": {"type": "string", "pattern": r"^\S+( \S+){4}$"}}},
+        "traffic": {"type": "object", "additionalProperties": False, "properties": {
+            "dayMinutes": {"type": "integer", "minimum": 1, "maximum": 1440}}},
+        "notify": {"type": "object"},
+        "cluster": {"type": "string"},     # the root Application's Helm parameter; not written in platform.yaml
+    },
+}
+
+
+# ---------------------------------------------------------------- a JSON schema subset (no jsonschema dependency)
+
+def _type_ok(v, t):
+    if isinstance(t, list):
+        return any(_type_ok(v, x) for x in t)
+    return {"object": lambda: isinstance(v, dict), "array": lambda: isinstance(v, list),
+            "string": lambda: isinstance(v, str), "boolean": lambda: isinstance(v, bool),
+            "integer": lambda: isinstance(v, int) and not isinstance(v, bool),
+            "number": lambda: isinstance(v, (int, float)) and not isinstance(v, bool),
+            "null": lambda: v is None}.get(t, lambda: True)()
+
+
+def validate(v, schema, path="", root=None):
+    """Problems of value v against a JSON schema: type, enum, const, properties, required, additionalProperties,
+    patternProperties, propertyNames, min/maxProperties, items, min/maxItems, uniqueItems, pattern, min/maxLength,
+    minimum, maximum, exclusiveMinimum/Maximum, $ref (local), allOf, anyOf, oneOf, not, if/then/else. Other keywords
+    (format, $schema, title, description, default, ...) are ignored."""
+    root = schema if root is None else root
+    if schema is True or schema == {}:
+        return []
+    if schema is False:
+        return [f"{path or '.'}: not allowed"]
+    at = path or "."
+    if "$ref" in schema:
+        ref = schema["$ref"]
+        if not ref.startswith("#"):
+            return [f"{at}: unsupported $ref {ref}"]
+        target = root
+        for part in [p for p in ref[1:].split("/") if p]:
+            target = target[part.replace("~1", "/").replace("~0", "~")]
+        out = validate(v, target, path, root)
+        rest = {k: x for k, x in schema.items() if k != "$ref"}
+        return out + (validate(v, rest, path, root) if rest else [])
+    out = []
+    if "type" in schema and not _type_ok(v, schema["type"]):
+        return [f"{at}: must be {schema['type']}, not {type(v).__name__} {v!r}"]
+    if "const" in schema and v != schema["const"]:
+        out.append(f"{at}: must be {schema['const']!r}, not {v!r}")
+    if "enum" in schema and v not in schema["enum"]:
+        allowed = ", ".join(map(str, schema["enum"])) if len(schema["enum"]) <= 10 else f"{len(schema['enum'])} names"
+        out.append(f"{at}: must be one of {allowed}, not {v!r}")
+    for k in ("allOf",):
+        for s in schema.get(k, []):
+            out += validate(v, s, path, root)
+    if "anyOf" in schema and not any(not validate(v, s, path, root) for s in schema["anyOf"]):
+        out.append(f"{at}: matches none of the allowed forms")
+    if "oneOf" in schema and sum(not validate(v, s, path, root) for s in schema["oneOf"]) != 1:
+        out.append(f"{at}: must match exactly one of the allowed forms")
+    if "not" in schema and not validate(v, schema["not"], path, root):
+        out.append(f"{at}: matches a forbidden form")
+    if "if" in schema:
+        branch = "then" if not validate(v, schema["if"], path, root) else "else"
+        if branch in schema:
+            out += validate(v, schema[branch], path, root)
+    if isinstance(v, dict):
+        props, pats = schema.get("properties", {}), schema.get("patternProperties", {})
+        for k in schema.get("required", []):
+            if k not in v:
+                out.append(f"{at}: {k} is required")
+        if "minProperties" in schema and len(v) < schema["minProperties"]:
+            out.append(f"{at}: needs at least {schema['minProperties']} entries")
+        if "maxProperties" in schema and len(v) > schema["maxProperties"]:
+            out.append(f"{at}: at most {schema['maxProperties']} entries")
+        for k, x in v.items():
+            p = f"{path}.{k}"
+            if "propertyNames" in schema:
+                out += [f"{p}: invalid name ({e.split(': ', 1)[-1]})" for e in validate(str(k), schema["propertyNames"], p, root)]
+            matched = False
+            if k in props:
+                matched = True
+                out += validate(x, props[k], p, root)
+            for pat, s in pats.items():
+                if re.search(pat, str(k)):
+                    matched = True
+                    out += validate(x, s, p, root)
+            if not matched and "additionalProperties" in schema:
+                ap = schema["additionalProperties"]
+                out += [f"{p}: unknown key"] if ap is False else validate(x, ap, p, root)
+    if isinstance(v, list):
+        if "minItems" in schema and len(v) < schema["minItems"]:
+            out.append(f"{at}: needs at least {schema['minItems']} items")
+        if "maxItems" in schema and len(v) > schema["maxItems"]:
+            out.append(f"{at}: at most {schema['maxItems']} items")
+        if schema.get("uniqueItems") and len({json.dumps(x, sort_keys=True) for x in v}) != len(v):
+            out.append(f"{at}: items must be unique")
+        if isinstance(schema.get("items"), dict):
+            for i, x in enumerate(v):
+                out += validate(x, schema["items"], f"{path}[{i}]", root)
+    if isinstance(v, str):
+        if "pattern" in schema and not re.search(schema["pattern"], v):
+            out.append(f"{at}: {v!r} does not match {schema['pattern']}")
+        if "minLength" in schema and len(v) < schema["minLength"]:
+            out.append(f"{at}: at least {schema['minLength']} characters")
+        if "maxLength" in schema and len(v) > schema["maxLength"]:
+            out.append(f"{at}: at most {schema['maxLength']} characters")
+    if _type_ok(v, "number"):
+        for k, ok in (("minimum", lambda a, b: a >= b), ("maximum", lambda a, b: a <= b),
+                      ("exclusiveMinimum", lambda a, b: a > b), ("exclusiveMaximum", lambda a, b: a < b)):
+            if isinstance(schema.get(k), (int, float)) and not isinstance(schema.get(k), bool) and not ok(v, schema[k]):
+                out.append(f"{at}: {v} violates {k} {schema[k]}")
+    return out
+
+
+def deep_merge(base, over):
+    out = copy.deepcopy(base)
+    for k, v in (over or {}).items():
+        out[k] = deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+# ---------------------------------------------------------------- check
+
+def load_yaml(path, problems):
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f)
+    except (OSError, yaml.YAMLError) as e:
+        problems.append(f"{path}: {e}")
+        return None
+
+
+def check_platform(p, problems, product=None):
+    """platform.yaml: the schema (the product's values.schema.json, else SCHEMA) plus what a schema cannot say."""
+    product = product or PRODUCT
+    if not isinstance(p, dict):
+        problems.append("platform.yaml: not a mapping")
+        return
+    schema_file = os.path.join(product, SCHEMA_FILE)
+    if os.path.exists(schema_file):
+        with open(schema_file) as f:
+            schema = json.load(f)
+        values = {}
+        if os.path.exists(os.path.join(product, VALUES_FILE)):   # Helm validates the chart's defaults merged in
+            with open(os.path.join(product, VALUES_FILE)) as f:
+                values = yaml.safe_load(f) or {}
+        clusters = list(p.get("clusters") or {}) if isinstance(p.get("clusters"), dict) else []
+        merged = deep_merge(values, p)
+        if not merged.get("cluster"):   # the root Application's Helm parameter
+            merged["cluster"] = clusters[0] if clusters else ""
+        errs = validate(merged, schema)
+    else:
+        errs = validate(p, SCHEMA)
+    problems += [f"platform.yaml: {e}" for e in dict.fromkeys(errs)]
+    tz = p.get("timezone")
+    if isinstance(tz, str) and not any(e.startswith(".timezone") for e in errs):
+        try:
+            import zoneinfo
+            zoneinfo.ZoneInfo(tz)
+        except ImportError:  # pragma: no cover (Python < 3.9)
+            pass
+        except Exception:
+            problems.append(f"platform.yaml: .timezone: unknown time zone {tz!r} (an IANA name, e.g. Europe/Berlin)")
+
+
+SLI_TYPES = {   # SLI type: required fields (docs/app-yaml.md); probe: service+port+path or url
+    "availability": ["metric", "errors"],
+    "latency": ["metric", "threshold"],
+    "probe": [],
+    "age": ["metric", "max"],
+    "ratio": ["errors", "total"],
+    "bool": ["metric"],
+}
+
+
+def check_app(d, app_dir, problems):
+    """One apps/<app>/app.yaml (docs/app-yaml.md). Returns {env names}, {slo name: environments or None}."""
+    name = os.path.basename(app_dir)
+    where = f"apps/{name}/app.yaml"
+    bad = lambda msg: problems.append(f"{where}: {msg}")   # noqa: E731
+    if not isinstance(d, dict):
+        bad("not a mapping")
+        return set(), {}
+    if d.get("name") != name:
+        bad(f"name {d.get('name')!r} must be the directory name {name!r}")
+    if not re.match(NAME, name):
+        bad(f"{name!r} is not a DNS label (lower case, digits, '-')")
+    envs = []
+    if not isinstance(d.get("environments"), list) or not d["environments"]:
+        bad("environments: a non-empty list is required")
+    else:
+        for i, e in enumerate(d["environments"]):
+            if not isinstance(e, dict) or not isinstance(e.get("name"), str) or not re.match(NAME, e["name"]):
+                bad(f"environments[{i}]: a name (DNS label) is required")
+                continue
+            if e["name"] in envs:
+                bad(f"environments: {e['name']} twice")
+            ts = e.get("trafficScale", 1)
+            if not isinstance(ts, (int, float)) or isinstance(ts, bool) or ts < 0:
+                bad(f"environments[{e['name']}].trafficScale: a number >= 0, not {ts!r}")
+            frm = (e.get("promotion") or {}).get("from") if isinstance(e.get("promotion"), dict) else None
+            if "promotion" in e and frm not in envs:
+                bad(f"environments[{e['name']}].promotion.from: {frm!r} is not an earlier environment")
+            envs.append(e["name"])
+    comps = []
+    if not isinstance(d.get("components"), list) or not d["components"]:
+        bad("components: a non-empty list is required")
+    else:
+        for i, c in enumerate(d["components"]):
+            if not isinstance(c, dict) or not isinstance(c.get("name"), str) or not re.match(NAME, c["name"]):
+                bad(f"components[{i}]: a name (DNS label) is required")
+                continue
+            cn = c["name"]
+            if cn in comps:
+                bad(f"components: {cn} twice")
+            if cn in (f"{name}-slo", f"{name}-traffic"):
+                bad(f"components: {cn} is taken by the platform")
+            comps.append(cn)
+            kinds = [k for k in ("kustomize", "helm") if k in c]
+            if len(kinds) != 1:
+                bad(f"components[{cn}]: exactly one of kustomize, helm")
+                continue
+            sub = str(c[kinds[0]])
+            if kinds[0] == "helm":
+                need = [f"{sub}/chart/Chart.yaml"] + [f"{sub}/values-{e}.yaml" for e in envs]
+            else:
+                need = [f"{sub}/{e}/kustomization.yaml" for e in envs]
+            for f in need:
+                if not os.path.exists(os.path.join(app_dir, f)):
+                    bad(f"components[{cn}]: apps/{name}/{f} does not exist")
+    for i, s in enumerate(d.get("services") or []):
+        if not isinstance(s, dict) or s.get("component") not in comps:
+            bad(f"services[{i}]: component {s.get('component') if isinstance(s, dict) else s!r} is not a component")
+    slos = {}
+    for i, s in enumerate(d.get("slos") or []):
+        if not isinstance(s, dict) or not isinstance(s.get("name"), str) or not re.match(NAME, s["name"]):
+            bad(f"slos[{i}]: a name (DNS label) is required")
+            continue
+        sn = s["name"]
+        if sn in slos:
+            bad(f"slos: {sn} twice")
+        o = s.get("objective")
+        if not isinstance(o, (int, float)) or isinstance(o, bool) or not 0 < o < 100:
+            bad(f"slos[{sn}].objective: a percentage between 0 and 100 (exclusive), not {o!r}")
+        types = [t for t in SLI_TYPES if t in s]
+        if len(types) != 1:
+            bad(f"slos[{sn}]: exactly one SLI type of {', '.join(SLI_TYPES)} (found {', '.join(types) or 'none'})")
+        else:
+            t, sli = types[0], s[types[0]]
+            if not isinstance(sli, dict):
+                bad(f"slos[{sn}].{t}: a mapping")
+            else:
+                missing = [k for k in SLI_TYPES[t] if k not in sli]
+                if t == "probe" and "url" not in sli:
+                    missing = [k for k in ("service", "port", "path") if k not in sli]
+                if t == "ratio":
+                    missing = [f"{k}.metric" for k in ("errors", "total")
+                               if not isinstance(sli.get(k), dict) or "metric" not in sli[k]]
+                if missing:
+                    bad(f"slos[{sn}].{t}: {', '.join(missing)} required")
+        se = s.get("environments")
+        if se is not None:
+            if not isinstance(se, list) or not se:
+                bad(f"slos[{sn}].environments: a non-empty list")
+                se = None
+            else:
+                for e in se:
+                    if e not in envs:
+                        bad(f"slos[{sn}].environments: {e!r} is not an environment")
+        slos[sn] = set(se) if se else None
+    t = d.get("traffic")
+    if t is not None:
+        if not isinstance(t, dict):
+            bad("traffic: a mapping")
+        else:
+            pr = t.get("peakRpm", 1)
+            if not isinstance(pr, (int, float)) or isinstance(pr, bool) or pr <= 0:
+                bad(f"traffic.peakRpm: a number > 0, not {pr!r}")
+            reqs = t.get("requests")
+            if not isinstance(reqs, list) or not reqs:
+                bad("traffic.requests: a non-empty list is required")
+            else:
+                for i, r in enumerate(reqs):
+                    if not isinstance(r, dict):
+                        bad(f"traffic.requests[{i}]: a mapping")
+                        continue
+                    missing = [k for k in ("weight", "method", "service", "port", "path") if k not in r]
+                    if missing:
+                        bad(f"traffic.requests[{i}]: {', '.join(missing)} required")
+                    w = r.get("weight", 1)
+                    if not isinstance(w, (int, float)) or isinstance(w, bool) or w <= 0:
+                        bad(f"traffic.requests[{i}].weight: a number > 0, not {w!r}")
+                    br = r.get("badRate", 0.05)
+                    if not isinstance(br, (int, float)) or isinstance(br, bool) or not 0 <= br <= 1:
+                        bad(f"traffic.requests[{i}].badRate: between 0 and 1, not {br!r}")
+                    if "path" in r and not str(r["path"]).startswith("/"):
+                        bad(f"traffic.requests[{i}].path: must start with /")
+    return set(envs), slos
+
+
+def check_experiment(x, path, apps, problems, seen):
+    """One experiment (docs/experiments.md): its namespace is <app>-<env> of an existing app and environment; the
+    `slo` label of every expected alert is <app>-<slo name> of a declared SLO (available in that namespace)."""
+    where = os.path.relpath(path)
+    bad = lambda msg: problems.append(f"{where}: {msg}")   # noqa: E731
+    name = os.path.splitext(os.path.basename(path))[0]
+    if name in seen:
+        bad(f"experiment name {name} also used by {seen[name]} (names are unique across applications)")
+    seen[name] = where
+    if not isinstance(x, dict):
+        bad("not a mapping")
+        return
+    namespaces = {f"{a}-{e}": (a, e) for a, (envs, _) in apps.items() for e in envs}
+    slo_ids = {f"{a}-{s}": envs for a, (_, slos) in apps.items() for s, envs in slos.items()}
+    ns = x.get("namespace")
+    if ns not in namespaces:
+        bad(f"namespace {ns!r} is not <app>-<env> of an application here ({', '.join(sorted(namespaces)) or 'none'})")
+    if not isinstance(x.get("fault"), list):
+        bad("fault: a list is required (empty: a negative test)")
+    for k in ("timeout", "recover", "hold"):
+        if k in x and not DURATION.match(str(x[k])):
+            bad(f"{k}: {x[k]!r} is not a duration (e.g. 15m)")
+    expect = x.get("expect")
+    if not isinstance(expect, dict):
+        bad("expect: a mapping is required")
+        return
+    for kind in ("fire", "quiet", "may_fire"):
+        for i, a in enumerate(expect.get(kind) or []):
+            if not isinstance(a, dict) or not a.get("alert"):
+                bad(f"expect.{kind}[{i}]: alert is required")
+                continue
+            if "within" in a and not DURATION.match(str(a["within"])):
+                bad(f"expect.{kind}[{i}].within: {a['within']!r} is not a duration")
+            labels = a.get("labels") or {}
+            if not isinstance(labels, dict):
+                bad(f"expect.{kind}[{i}].labels: a mapping")
+                continue
+            ans = labels.get("namespace", ns)
+            if "namespace" in labels and ans not in namespaces:
+                bad(f"expect.{kind}[{i}]: namespace {ans!r} is not <app>-<env> of an application here")
+            slo = labels.get("slo")
+            if slo is None:
+                continue
+            if slo not in slo_ids:
+                bad(f"expect.{kind}[{i}]: slo {slo!r} is not <app>-<slo name> of a declared SLO")
+                continue
+            app = next(a for a in apps if slo.startswith(f"{a}-") and slo[len(a) + 1:] in apps[a][1])
+            if ans in namespaces:
+                a_app, a_env = namespaces[ans]
+                if a_app != app:
+                    bad(f"expect.{kind}[{i}]: slo {slo} belongs to {app}, not to namespace {ans}")
+                elif slo_ids[slo] is not None and a_env not in slo_ids[slo]:
+                    bad(f"expect.{kind}[{i}]: slo {slo} is not declared for environment {a_env}")
+
+
+def check(instance):
+    """Every problem of the instance repository at `instance` (empty list: clean)."""
+    problems = []
+    pf = os.path.join(instance, "platform.yaml")
+    if not os.path.exists(pf):
+        return [f"{pf}: missing (create an instance with `slo-platform init`)"]
+    check_platform(load_yaml(pf, problems), problems)
+    apps = {}
+    for f in sorted(glob.glob(os.path.join(instance, "apps", "*", "app.yaml"))):
+        d = os.path.dirname(f)
+        n = len(problems)
+        data = load_yaml(f, problems)
+        if len(problems) == n:
+            apps[os.path.basename(d)] = check_app(data, d, problems)
+    seen = {}
+    for f in sorted(glob.glob(os.path.join(instance, "apps", "*", "experiments", "*.yaml"))):
+        n = len(problems)
+        data = load_yaml(f, problems)
+        if len(problems) == n:
+            check_experiment(data, f, apps, problems, seen)
+    return problems
+
+
+# ---------------------------------------------------------------- init
+
+def parse_cluster(s):
+    """name:role:runtime[:objectStorage]; name:runtime when the name is the role (lab:kind, prod:k3s)."""
+    parts = s.split(":")
+    if len(parts) == 2 and parts[0] in ("prod", "lab"):
+        parts = [parts[0], parts[0], parts[1]]
+    if len(parts) not in (3, 4):
+        raise ValueError(f"--cluster {s!r}: name:role:runtime[:objectStorage] (e.g. lab:lab:kind, home:prod:k3s)")
+    c = {"name": parts[0], "role": parts[1], "runtime": parts[2], "objectStorage": parts[3] if len(parts) == 4 else "none"}
+    props = SCHEMA["properties"]["clusters"]["additionalProperties"]["properties"]
+    errs = validate(c["name"], {"pattern": NAME}) + [
+        e for k in ("role", "runtime", "objectStorage") for e in validate(c[k], props[k], k)]
+    if errs:
+        raise ValueError(f"--cluster {s!r}: " + "; ".join(errs))
+    return c
+
+
+def platform_yaml(owner, repo, clusters, version, timezone, product_repo):
+    col = lambda s, c: f"{s.ljust(34)} # {c}"   # noqa: E731 (comments aligned like the rest of the file)
+    cl = "\n".join("\n".join([
+        f"  {c['name']}:",
+        col(f"    role: {c['role']}", "prod: notifies, never experiments. lab: experiments + daily regression"),
+        col(f"    runtime: {c['runtime']}", "kind | k3s | generic (Chaos Mesh's container runtime socket)"),
+        col(f"    objectStorage: {c['objectStorage']}", "none | in-cluster (database backups)")]) for c in clusters)
+    tz = col(f"timezone: {timezone}", "IANA name: schedules, the synthetic users' day")
+    return f"""# Your slo-platform instance: the one configuration file (reference: docs/configuration.md of slo-platform).
+# It is also the values of the platform's root chart: Argo CD reads it from this repository.
+apiVersion: slo-platform/v1
+product:                           # the platform: this repository at this version (upgrade = change it)
+  repo: {product_repo}
+  version: {version}
+instance:                          # this repository: apps/*/app.yaml, experiments
+  repo: https://github.com/{owner}/{repo}.git
+  revision: main
+{tz}
+language: en                       # en | zh | ja (notification texts)
+clusters:                          # bootstrap one cluster at a time by its name
+{cl}
+optional:
+  policies: false                  # Kyverno + the workload baseline
+grafana:
+  adminSecret: grafana-admin       # Secret in monitoring (admin-user, admin-password), created by bootstrap
+regression:
+  schedule: "0 9 * * *"            # the daily fault regression on lab clusters (in the time zone above)
+traffic:
+  dayMinutes: 1440                 # the synthetic users' day; less compresses it (60: one day per hour)
+notify: {{}}                         # who hears what (later); accepted and ignored for now
+"""
+
+
+GITIGNORE = """# OpenTofu state holds secrets (Argo CD credentials, Grafana's password): never commit it
+.tofu/
+*.tfstate*
+.terraform/
+.secrets/
+*.decrypted.*
+secrets/example.yaml
+"""
+
+SECRETS_SKELETON = """# Secrets for cluster {cluster}. Every key is optional: bootstrap generates throwaway values for what is missing.
+# Edit with `sops {path}` (decrypts, opens $EDITOR, encrypts); reference: docs/configuration.md of slo-platform.
+#
+# git:
+#   token: ghp_...           # Argo CD's read access to private product / instance repositories (and the regression's)
+# grafana:
+#   adminPassword: ...       # Grafana's admin password; random when absent
+secrets: {{}}                  # for applications: <namespace>: {{ <secret-name>: {{ <key>: <value> }} }}
+"""
+
+
+def readme(owner, repo, clusters, examples, product_repo, version, secrets_note):
+    first = clusters[0]["name"]
+    apps = "\n".join(f"- `apps/{e}/`" for e in examples) or "- (none yet: add `apps/<app>/app.yaml`)"
+    return f"""# {repo}
+
+An [slo-platform](https://github.com/MIERAI/slo-platform) instance: the configuration of the platform
+(`platform.yaml`) and the applications it runs (`apps/<app>/app.yaml`, their manifests and fault experiments). The
+platform itself comes from `{product_repo}` at `{version}`.
+
+Applications:
+
+{apps}
+
+## Next steps
+
+1. Push this directory to `https://github.com/{owner}/{repo}` (Argo CD reads it from there):
+
+   ```sh
+   git init -b main && git add -A && git commit -m "slo-platform instance"
+   git remote add origin https://github.com/{owner}/{repo}.git && git push -u origin main
+   ```
+
+2. Check the configuration whenever you change it: `slo-platform check .`
+3. Bootstrap a cluster ({', '.join(c['name'] for c in clusters)}) with OpenTofu from a checkout of slo-platform at
+   `{version}`: `bootstrap/tofu/kind` creates a kind cluster, `bootstrap/tofu/cluster` uses an existing one. Both
+   read this directory (`instance_dir`) and a cluster name (`cluster`), e.g.
+
+   ```sh
+   tofu -chdir=<slo-platform>/bootstrap/tofu/kind init
+   tofu -chdir=<slo-platform>/bootstrap/tofu/kind apply -var instance_dir=$PWD -var cluster={first}
+   ```
+
+   The exact variables are in `bootstrap/README.md` of slo-platform. The state is kept in `.tofu/` here and holds
+   secrets: it is gitignored, keep it that way.
+4. {secrets_note}
+5. Upgrade the platform: `slo-platform upgrade --version <tag> .`, commit, push; Argo CD follows.
+"""
+
+
+def age_public_key(key_file):
+    with open(key_file) as f:
+        for line in f:
+            m = re.match(r"#\s*public key:\s*(age1\S+)", line)
+            if m:
+                return m.group(1)
+    r = subprocess.run(["age-keygen", "-y", key_file], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.startswith("age1"):
+        raise RuntimeError(f"{key_file}: no age public key found ({r.stderr.strip()})")
+    return r.stdout.split()[0]
+
+
+def setup_age(target, clusters, key_file, say):
+    """An age key outside the repository (never overwritten), .sops.yaml, and an encrypted secrets skeleton per
+    cluster — or, without sops, one unencrypted secrets/example.yaml (gitignored) and a warning."""
+    if not shutil.which("age-keygen"):
+        raise RuntimeError("--age needs age-keygen (https://github.com/FiloSottile/age)")
+    key_file = os.path.abspath(os.path.expanduser(key_file))
+    if os.path.exists(key_file):
+        say(f"age key: using the existing {key_file}")
+    else:
+        os.makedirs(os.path.dirname(key_file), mode=0o700, exist_ok=True)
+        r = subprocess.run(["age-keygen", "-o", key_file], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"age-keygen: {r.stderr.strip()}")
+        os.chmod(key_file, 0o600)
+        say(f"age key: created {key_file} — back it up; without it the secrets cannot be decrypted")
+    pub = age_public_key(key_file)
+    with open(os.path.join(target, ".sops.yaml"), "w") as f:
+        f.write("# SOPS: who can decrypt secrets/*.sops.yaml (age public keys, comma-separated)\n"
+                "creation_rules:\n"
+                "  - path_regex: secrets/.*\\.sops\\.yaml$\n"
+                f"    age: {pub}\n")
+    os.makedirs(os.path.join(target, "secrets"), exist_ok=True)
+    if not shutil.which("sops"):
+        with open(os.path.join(target, "secrets", "example.yaml"), "w") as f:
+            f.write(SECRETS_SKELETON.format(cluster="<cluster>", path="secrets/<cluster>.sops.yaml"))
+        say("warning: sops not found: wrote an UNENCRYPTED secrets/example.yaml (gitignored). Install sops, then "
+            "`sops -e secrets/example.yaml > secrets/<cluster>.sops.yaml` and delete the example")
+        return "Secrets: install sops, encrypt `secrets/example.yaml` into `secrets/<cluster>.sops.yaml` (see the warning init printed)."
+    env = dict(os.environ, SOPS_AGE_KEY_FILE=key_file)
+    for c in clusters:
+        rel = os.path.join("secrets", f"{c['name']}.sops.yaml")
+        with open(os.path.join(target, rel), "w") as f:
+            f.write(SECRETS_SKELETON.format(cluster=c["name"], path=rel))
+        r = subprocess.run(["sops", "--encrypt", "--in-place", rel], cwd=target, env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            os.remove(os.path.join(target, rel))
+            raise RuntimeError(f"sops --encrypt {rel}: {r.stderr.strip()}")
+        say(f"secrets: {rel} (encrypted for {pub})")
+    return ("Secrets (optional): `sops secrets/<cluster>.sops.yaml` (e.g. git.token for private repositories). The age "
+            f"key is `{key_file}`: back it up, never commit it.")
+
+
+def init(target, owner, repo, clusters, examples, version, timezone="Etc/UTC", product_repo=PRODUCT_REPO,
+         age=False, age_key_file=DEFAULT_AGE_KEY, product=None, say=print):
+    product = product or PRODUCT
+    if os.path.exists(target) and (not os.path.isdir(target) or os.listdir(target)):
+        raise RuntimeError(f"{target}: exists and is not an empty directory")
+    for v, what in ((owner, "--owner"), (repo, "--repo")):
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", v or ""):
+            raise RuntimeError(f"{what} {v!r}: a GitHub owner / repository name")
+    if not re.match(REF, version):
+        raise RuntimeError(f"--version {version!r}: a git tag or branch")
+    names = [c["name"] for c in clusters]
+    if len(set(names)) != len(names):
+        raise RuntimeError(f"--cluster: duplicate names {names}")
+    for e in examples:
+        if not os.path.exists(os.path.join(product, "examples", e, "app.yaml")):
+            have = sorted(os.path.basename(os.path.dirname(f)) for f in glob.glob(os.path.join(product, "examples", "*", "app.yaml")))
+            raise RuntimeError(f"--example {e}: not an example of this product ({', '.join(have)})")
+    created = not os.path.exists(target)
+    os.makedirs(target, exist_ok=True)
+    try:
+        with open(os.path.join(target, "platform.yaml"), "w") as f:
+            f.write(platform_yaml(owner, repo, clusters, version, timezone, product_repo))
+        os.makedirs(os.path.join(target, "apps"), exist_ok=True)
+        for e in examples:
+            shutil.copytree(os.path.join(product, "examples", e), os.path.join(target, "apps", e),
+                            ignore=shutil.ignore_patterns("results", "__pycache__", "*.pyc", ".DS_Store"))
+        if not examples:
+            open(os.path.join(target, "apps", ".gitkeep"), "w").close()
+        with open(os.path.join(target, ".gitignore"), "w") as f:
+            f.write(GITIGNORE)
+        note = ("Secrets (optional): without `secrets/<cluster>.sops.yaml` bootstrap generates throwaway values (fine "
+                "for a lab). To keep your own (SOPS + age): docs/configuration.md of slo-platform.")
+        if age:
+            note = setup_age(target, clusters, age_key_file, say)
+        with open(os.path.join(target, "README.md"), "w") as f:
+            f.write(readme(owner, repo, clusters, examples, product_repo, version, note))
+    except Exception:   # leave nothing half-made behind
+        if created:
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            for n in os.listdir(target):
+                q = os.path.join(target, n)
+                shutil.rmtree(q) if os.path.isdir(q) else os.remove(q)
+        raise
+    say(f"created {target}: platform.yaml, apps/ ({', '.join(examples) or 'empty'}), README.md — next steps in its README")
+
+
+# ---------------------------------------------------------------- upgrade
+
+def set_version(text, version):
+    """platform.yaml text with product.version set to version; every other line (and comment) untouched."""
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        m = re.match(r"^product:(.*)$", line.rstrip("\n"))
+        if not m:
+            continue
+        if m.group(1).strip().startswith("{"):   # flow style: product: { repo: ..., version: main }
+            new, n = re.subn(r"(\bversion:\s*)([^,}\s]+)", lambda mm: mm.group(1) + version, line, count=1)
+            if n:
+                lines[i] = new
+                return "".join(lines)
+            break
+        for j in range(i + 1, len(lines)):
+            if lines[j].strip() and not lines[j].startswith((" ", "\t")) and not lines[j].lstrip().startswith("#"):
+                break   # the next top-level key: product ends
+            mm = re.match(r"^(\s+version:\s*)(\"[^\"]*\"|'[^']*'|[^\s#]+)(.*)$", lines[j].rstrip("\n"))
+            if mm:
+                lines[j] = mm.group(1) + version + mm.group(3) + ("\n" if lines[j].endswith("\n") else "")
+                return "".join(lines)
+        break
+    raise RuntimeError("platform.yaml: no product.version to change")
+
+
+def upgrade(instance, version, say=print):
+    if not re.match(REF, version):
+        raise RuntimeError(f"--version {version!r}: a git tag or branch")
+    pf = os.path.join(instance, "platform.yaml")
+    with open(pf) as f:
+        text = f.read()
+    old = (yaml.safe_load(text) or {}).get("product", {}).get("version")
+    new = set_version(text, version)
+    if yaml.safe_load(new)["product"]["version"] != version:   # pragma: no cover (a YAML form set_version misread)
+        raise RuntimeError("platform.yaml: could not set product.version safely; edit it by hand")
+    with open(pf, "w") as f:
+        f.write(new)
+    say(f"product.version: {old} → {version} ({pf}); run `slo-platform check`, commit and push: Argo CD follows")
+
+
+# ---------------------------------------------------------------- CLI
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="slo-platform", description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("init", help="create an instance repository")
+    p.add_argument("dir")
+    p.add_argument("--owner", required=True, help="GitHub owner of the instance repository")
+    p.add_argument("--repo", required=True, help="name of the instance repository")
+    p.add_argument("--cluster", action="append", default=[], metavar="NAME:ROLE:RUNTIME[:OBJECTSTORAGE]",
+                   help="a cluster (repeatable; default lab:lab:kind). role prod|lab, runtime kind|k3s|generic, "
+                        "objectStorage none|in-cluster")
+    p.add_argument("--example", action="append", default=None, metavar="APP",
+                   help="copy examples/APP to apps/APP (repeatable; default sample-app; 'none' for no application)")
+    p.add_argument("--version", default="main", help="product version (git tag or branch; default main)")
+    p.add_argument("--timezone", default="Etc/UTC", help="IANA time zone (default Etc/UTC)")
+    p.add_argument("--product-repo", default=PRODUCT_REPO, help="the product repository (a fork)")
+    p.add_argument("--age", action="store_true", help="set up SOPS + age: a key, .sops.yaml, secrets skeletons")
+    p.add_argument("--age-key-file", default=os.environ.get("SOPS_AGE_KEY_FILE", DEFAULT_AGE_KEY),
+                   help=f"age key file, outside the repository; reused when it exists (default {DEFAULT_AGE_KEY})")
+    p = sub.add_parser("check", help="validate an instance repository")
+    p.add_argument("dir", nargs="?", default=".")
+    p = sub.add_parser("upgrade", help="set product.version")
+    p.add_argument("--version", required=True)
+    p.add_argument("dir", nargs="?", default=".")
+    a = ap.parse_args(argv)
+    try:
+        if a.cmd == "init":
+            clusters = [parse_cluster(c) for c in (a.cluster or ["lab:lab:kind"])]
+            examples = [e for e in (a.example if a.example is not None else ["sample-app"]) if e != "none"]
+            init(a.dir, a.owner, a.repo, clusters, list(dict.fromkeys(examples)), a.version, a.timezone,
+                 a.product_repo, a.age, a.age_key_file)
+            problems = check(a.dir)
+            if problems:   # pragma: no cover (a product whose examples do not pass its own check)
+                print("\n".join(f"✗ {p}" for p in problems), file=sys.stderr)
+                return 1
+        elif a.cmd == "check":
+            problems = check(a.dir)
+            if problems:
+                print("\n".join(f"✗ {p}" for p in problems), file=sys.stderr)
+                print(f"{len(problems)} problem(s)", file=sys.stderr)
+                return 1
+            n = len(glob.glob(os.path.join(a.dir, "apps", "*", "app.yaml")))
+            x = len(glob.glob(os.path.join(a.dir, "apps", "*", "experiments", "*.yaml")))
+            print(f"✓ platform.yaml, {n} application(s), {x} experiment(s)")
+        elif a.cmd == "upgrade":
+            upgrade(a.dir, a.version)
+    except (RuntimeError, ValueError, OSError) as e:
+        print(f"✗ {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
