@@ -1,0 +1,27 @@
+{
+  "receiver": "page",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {"alertname": "ErrorBudgetBurn", "namespace": "storefront-prod", "slo": "storefront-api-availability",
+                 "severity": "page", "long": "1h", "short": "5m"},
+      "annotations": {"summary": "storefront prod: api-availability SLO 99.5% is burning its error budget",
+                      "runbook": "https://github.com/MIERAI/slo-platform/blob/main/docs/runbook.md#error-budget-burn?a=1&b=<2>"},
+      "startsAt": "2026-11-21T09:00:00Z", "endsAt": "0001-01-01T00:00:00Z", "generatorURL": "http://prometheus/graph",
+      "fingerprint": "a1"
+    },
+    {
+      "status": "resolved",
+      "labels": {"alertname": "ErrorBudgetBurn", "namespace": "storefront-prod", "slo": "storefront-api-latency",
+                 "severity": "page", "long": "6h", "short": "30m"},
+      "annotations": {"description": "latency of the api"},
+      "startsAt": "2026-11-21T08:00:00Z", "endsAt": "2026-11-21T09:10:00Z", "generatorURL": "http://prometheus/graph",
+      "fingerprint": "a2"
+    }
+  ],
+  "groupLabels": {"alertname": "ErrorBudgetBurn", "namespace": "storefront-prod"},
+  "commonLabels": {"alertname": "ErrorBudgetBurn", "namespace": "storefront-prod", "severity": "page"},
+  "commonAnnotations": {},
+  "externalURL": "http://alertmanager"
+}

@@ -6,7 +6,8 @@ fires when it should — and that normal traffic pages nobody. Error budgets the
 
 > **Status: pre-alpha (P2).** `slo-platform init` creates your instance repository (one `platform.yaml`), and
 > `bootstrap/tofu` installs the platform from a version of this repository into a kind or an existing cluster.
-> Notification receivers (P3) and the documented quickstart (P4) are next. See [docs/roadmap.md](docs/roadmap.md).
+> Notification receivers (`notify` in platform.yaml, P3) are in; P3 is done when a page from the documented quickstart
+> (P4) reaches ntfy. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Why
 

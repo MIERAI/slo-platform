@@ -4,6 +4,7 @@ as bootstrap creates it, the ApplicationSet's sources, and its refusals (no / un
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -57,6 +58,13 @@ def helm_values(app):
     return app["spec"]["source"]["helm"]["valuesObject"]
 
 
+def alertmanager(objs):
+    """platform-monitoring's Alertmanager: {config, templates (templateFiles), secrets (alertmanagerSpec.secrets)}"""
+    am = helm_values(objs["platform-monitoring"])["alertmanager"]
+    return {"config": am["config"], "templates": am.get("templateFiles") or {},
+            "secrets": am["alertmanagerSpec"].get("secrets") or []}
+
+
 @unittest.skipUnless(shutil.which("helm"), "needs helm")
 class RootChart(unittest.TestCase):
     def test_sets_per_role(self):
@@ -68,15 +76,135 @@ class RootChart(unittest.TestCase):
         self.assertEqual(set(minimal), COMMON | {"platform-experiments"})
 
     def test_alertmanager(self):
-        def config(objs):
-            return helm_values(objs["platform-monitoring"])["alertmanager"]["config"]
-        prod, lab = config(ok(BASE, "prod")), config(ok(BASE, "lab"))
-        self.assertIn({"receiver": "default", "matchers": ['severity=~"page|ticket"']}, prod["route"]["routes"])
-        self.assertEqual([r["name"] for r in prod["receivers"]], ["null", "default"])
-        self.assertEqual(lab["route"]["receiver"], "null")
-        self.assertNotIn("routes", lab["route"])
-        self.assertEqual(lab["receivers"], [{"name": "null"}])
-        self.assertEqual(lab["inhibit_rules"], prod["inhibit_rules"])
+        prod, lab = alertmanager(ok(BASE, "prod")), alertmanager(ok(BASE, "lab"))
+        # notify: {} → as before notifications: page / ticket routed, to nobody
+        self.assertEqual(prod["config"]["route"]["routes"], [
+            {"receiver": "null", "matchers": ['alertname=~"Watchdog|InfoInhibitor"']},
+            {"receiver": "null", "matchers": ['namespace=~".+-(dev|staging)"']},
+            {"receiver": "null", "matchers": ['severity="page"']},
+            {"receiver": "null", "matchers": ['severity="ticket"']}])
+        self.assertEqual(prod["config"]["route"]["group_by"], ["alertname", "namespace"])
+        self.assertEqual(prod["config"]["receivers"], [{"name": "null"}])
+        self.assertEqual((prod["templates"], prod["secrets"]), ({}, []))
+        self.assertNotIn("templates", prod["config"])
+        self.assertEqual(lab["config"]["route"]["receiver"], "null")
+        self.assertNotIn("routes", lab["config"]["route"])
+        self.assertEqual(lab["config"]["receivers"], [{"name": "null"}])
+        self.assertEqual(lab["config"]["inhibit_rules"], prod["config"]["inhibit_rules"])
+
+    def test_notify_routing(self):
+        n = {"page": [{"type": "webhook", "url": "http://p.example/x"}],
+             "ticket": [{"type": "webhook", "url": "http://t.example/x"}, {"type": "ntfy", "topic": "t"}],
+             "deadman": {"url": "https://hc-ping.com/abc", "interval": "2m"}}
+        prod = alertmanager(ok(values(notify=n), "prod"))
+        routes = prod["config"]["route"]["routes"]
+        self.assertEqual(routes[0], {"receiver": "deadman", "matchers": ['alertname="Watchdog"'], "group_wait": "0s",
+                                     "group_interval": "2m", "repeat_interval": "1s"})
+        self.assertEqual(routes[1:], [
+            {"receiver": "null", "matchers": ['alertname=~"Watchdog|InfoInhibitor"']},
+            {"receiver": "null", "matchers": ['namespace=~".+-(dev|staging)"']},
+            {"receiver": "page", "matchers": ['severity="page"']},
+            {"receiver": "ticket", "matchers": ['severity="ticket"']}])
+        rcv = {r["name"]: r for r in prod["config"]["receivers"]}
+        self.assertEqual(rcv["deadman"], {"name": "deadman", "webhook_configs": [
+            {"send_resolved": False, "url": "https://hc-ping.com/abc"}]})
+        self.assertEqual([c["url"] for c in rcv["ticket"]["webhook_configs"]], ["http://t.example/x", "https://ntfy.sh/"])
+        self.assertEqual(prod["secrets"], [])                              # no receiver here needs a secret
+        self.assertEqual(prod["config"]["templates"], ["/etc/alertmanager/config/*.tmpl"])
+        self.assertIn("slo.title", prod["templates"]["slo-platform.tmpl"])
+        # only one severity configured: the other stays silent
+        only = alertmanager(ok(values(notify={"ticket": n["ticket"]}), "prod"))["config"]
+        self.assertEqual([r["receiver"] for r in only["route"]["routes"]], ["null", "null", "null", "ticket"])
+        # a lab cluster notifies nobody, whatever notify says
+        self.assertEqual(alertmanager(ok(values(notify=n), "lab")), alertmanager(ok(BASE, "lab")))
+
+    def test_notify_receivers(self):
+        f = "/etc/alertmanager/secrets/alertmanager-notify/"
+        n = {"page": [{"type": "telegram", "chatId": "-1001234567890"},
+                      {"type": "telegram", "chatId": 42, "threadId": 7, "secretKey": "opsBot"},
+                      {"type": "slack", "channel": "#pages"}, {"type": "discord"}, {"type": "pushover"},
+                      {"type": "ntfy", "url": "https://ntfy.example.com/", "topic": "pages", "secretKey": "ntfyToken"}],
+             "ticket": [{"type": "email", "to": "ops@example.com", "from": "am@example.com", "smarthost": "smtp.example.com:587",
+                         "username": "am"},
+                        {"type": "email", "to": "x@example.com", "from": "am@example.com", "smarthost": "relay:25",
+                         "requireTls": False},
+                        {"type": "webhook"}, {"type": "msteams"}, {"type": "mattermost", "channel": "t"},
+                        {"type": "pushover", "secretKey": "po", "userSecretKey": "pu"}],
+             "deadman": {"interval": "1m"}}
+        am = alertmanager(ok(values(notify=n), "prod"))
+        self.assertEqual(am["secrets"], ["alertmanager-notify"])
+        r = {x["name"]: x for x in am["config"]["receivers"]}
+        p, t = r["page"], r["ticket"]
+        self.assertEqual(p["telegram_configs"][0], {
+            "send_resolved": True, "bot_token_file": f + "telegramBotToken", "chat_id": -1001234567890,
+            "parse_mode": "HTML", "message": '{{ template "slo.telegram" . }}'})
+        self.assertEqual((p["telegram_configs"][1]["chat_id"], p["telegram_configs"][1]["message_thread_id"],
+                          p["telegram_configs"][1]["bot_token_file"]), (42, 7, f + "opsBot"))
+        self.assertEqual({k: p["slack_configs"][0][k] for k in ("api_url_file", "channel", "send_resolved")},
+                         {"api_url_file": f + "slackWebhookUrl", "channel": "#pages", "send_resolved": True})
+        self.assertEqual(p["discord_configs"][0]["webhook_url_file"], f + "discordWebhookUrl")
+        self.assertEqual(p["pushover_configs"][0]["token_file"], f + "pushoverToken")
+        self.assertEqual(p["pushover_configs"][0]["user_key_file"], f + "pushoverUserKey")
+        self.assertIn("1", p["pushover_configs"][0]["priority"])          # page: high priority while firing
+        self.assertEqual(t["pushover_configs"][0]["priority"], "0")
+        self.assertEqual((t["pushover_configs"][0]["token_file"], t["pushover_configs"][0]["user_key_file"]), (f + "po", f + "pu"))
+        ntfy = p["webhook_configs"][0]
+        self.assertEqual(ntfy["url"], "https://ntfy.example.com/")
+        self.assertEqual(ntfy["http_config"], {"authorization": {"credentials_file": f + "ntfyToken"}})
+        self.assertEqual(ntfy["payload"]["topic"], "pages")
+        self.assertEqual(ntfy["payload"]["message"], '{{ template "slo.ntfy" . }}')
+        e1, e2 = t["email_configs"]
+        self.assertEqual((e1["auth_username"], e1["auth_password_file"], e1["require_tls"], e1["send_resolved"]),
+                         ("am", f + "smtpPassword", True, True))
+        self.assertNotIn("auth_password_file", e2)
+        self.assertFalse(e2["require_tls"])
+        self.assertEqual(e1["headers"], {"Subject": '{{ template "slo.title" . }}'})
+        self.assertEqual(t["webhook_configs"][0], {"send_resolved": True, "url_file": f + "webhookUrl"})
+        self.assertEqual(t["msteamsv2_configs"][0]["webhook_url_file"], f + "msteamsWebhookUrl")
+        self.assertEqual(t["mattermost_configs"][0]["webhook_url_file"], f + "mattermostWebhookUrl")
+        self.assertEqual(r["deadman"]["webhook_configs"], [{"send_resolved": False, "url_file": f + "deadmanUrl"}])
+
+    def test_notify_secret_only_when_needed(self):
+        for receiver, secret in (({"type": "webhook", "url": "http://x.example/"}, False), ({"type": "ntfy", "topic": "t"}, False),
+                                 ({"type": "email", "to": "a@b.c", "from": "d@e.f", "smarthost": "h:25"}, False),
+                                 ({"type": "webhook"}, True), ({"type": "discord"}, True),
+                                 ({"type": "email", "to": "a@b.c", "from": "d@e.f", "smarthost": "h:25", "username": "u"}, True)):
+            am = alertmanager(ok(values(notify={"page": [receiver]}), "prod"))
+            self.assertEqual(am["secrets"], ["alertmanager-notify"] if secret else [], receiver)
+        self.assertEqual(alertmanager(ok(values(notify={"deadman": {"url": "https://hc.example/x"}}), "prod"))["secrets"], [])
+        self.assertEqual(alertmanager(ok(values(notify={"deadman": {"interval": "5m"}}), "prod"))["secrets"],
+                         ["alertmanager-notify"])
+
+    def test_notify_language(self):
+        page = [{"type": "webhook", "url": "http://x.example/"}]
+        for lang, notify_lang, word in (("en", None, "PAGE"), ("zh", None, "紧急"), ("ja", None, "緊急"), ("zh", "ja", "緊急"),
+                                        ("ja", "en", "PAGE")):
+            n = {"page": page} if notify_lang is None else {"page": page, "language": notify_lang}
+            tmpl = alertmanager(ok(values(language=lang, notify=n), "prod"))["templates"]["slo-platform.tmpl"]
+            self.assertIn('{{ define "slo.l.page" }}%s{{ end }}' % word, tmpl, (lang, notify_lang))
+            self.assertEqual(tmpl.count('define "slo.l.page"'), 1)
+
+    def test_notify_texts_cover_every_language(self):
+        d = os.path.join(CHART, "files", "notify")
+        words = None
+        for lang in ("en", "zh", "ja"):
+            with open(os.path.join(d, f"{lang}.tmpl")) as f:
+                defined = sorted(re.findall(r'define "(slo\.l\.[a-z]+)"', f.read()))
+            words = words or defined
+            self.assertEqual(defined, words, lang)
+        with open(os.path.join(d, "common.tmpl")) as f:
+            used = set(re.findall(r'template "(slo\.l\.[a-z]+)"', f.read()))
+        self.assertEqual(used, set(words))
+
+    def test_alertmanager_version_everywhere(self):
+        """amtool (CI) and the delivery test run the Alertmanager kube-prometheus-stack ships: the version noted next to
+        the chart's pin."""
+        with open(os.path.join(CHART, "templates", "platform-monitoring.yaml")) as f:
+            v = re.search(r"targetRevision: [0-9.]+ +# Alertmanager v([0-9.]+)", f.read()).group(1)
+        with open(os.path.join(ROOT, "scripts", "install-tools.sh")) as f:
+            self.assertEqual(set(re.findall(r"alertmanager/releases/download/v([0-9.]+)/", f.read())), {v})
+        with open(os.path.join(ROOT, "scripts", "notify-delivery.sh")) as f:
+            self.assertEqual(set(re.findall(r"prometheus/alertmanager:v([0-9.]+)", f.read())), {v})
 
     def test_grafana_admin_from_secret(self):
         g = helm_values(ok(values(grafana={"adminSecret": "my-admin"}), "prod")["platform-monitoring"])["grafana"]
@@ -160,7 +288,18 @@ class RootChart(unittest.TestCase):
                 (values(clusters={"prod": {"role": "production"}}), "prod", "role"),
                 (values(timezone="Asia/Tokio"), "prod", "timezone"),
                 (values(apiVersion="slo-platform/v2"), "prod", "apiVersion"),
-                (values(instance={"repo": "", "revision": "main"}), "prod", "instance")):
+                (values(instance={"repo": "", "revision": "main"}), "prod", "instance"),
+                (values(notify={"pages": []}), "prod", "pages"),
+                (values(notify={"page": [{"type": "sms"}]}), "prod", "type"),
+                (values(notify={"page": [{"type": "telegram"}]}), "prod", "chatId"),
+                (values(notify={"page": [{"type": "telegram", "chatid": 1}]}), "prod", "chatid"),
+                (values(notify={"page": [{"type": "telegram", "chatId": "@ops"}]}), "prod", "chatId"),
+                (values(notify={"page": [{"type": "ntfy", "topic": "a/b"}]}), "prod", "topic"),
+                (values(notify={"page": [{"type": "slack", "url": "https://hooks.slack.com/x"}]}), "prod", "url"),   # a secret
+                (values(notify={"ticket": [{"type": "email", "to": "a@b.c"}]}), "prod", "from"),
+                (values(notify={"deadman": {}}), "prod", "deadman"),
+                (values(notify={"deadman": {"url": "https://x.example/", "secretKey": "k"}}), "prod", "deadman"),
+                (values(notify={"language": "de"}), "prod", "language")):
             rc, _, err = helm(v, cluster)
             self.assertNotEqual(rc, 0, want)
             self.assertIn(want, err)

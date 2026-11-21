@@ -6,7 +6,8 @@
 #     sane scenarios)
 #   - the root chart (platform/root) with every ci/ platform.yaml, once per cluster in it (helm lint against
 #     values.schema.json, kubeconform); its behaviour per role / runtime / options is unit-tested
-#     (platform/root/test_root.py, in scripts/test.sh)
+#     (scripts/test_root_chart.py, in scripts/test.sh); its Alertmanager configuration (routing, notify's receivers,
+#     texts) through amtool check-config, and once through kube-prometheus-stack as the cluster gets it
 #   - an instance assembled from examples/ (scripts/render.py), for every cluster of platform/root/ci/platform.yaml:
 #     every Application the root chart makes from the product or the instance, including those the ApplicationSet
 #     derives from each app.yaml; traffic again through k6. With no examples, only the platform's.
@@ -19,6 +20,7 @@ KC=${KUBECONFORM:-kubeconform}
 KY=${KYVERNO:-kyverno}
 K6=${K6:-k6}
 PY=${PYTHON:-python3}
+AMTOOL=${AMTOOL:-amtool}
 CRDS='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 PINNED='platform/pyrra/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'   # from our pinned CRD (the catalog's is older)
 kc() { $KC -strict -summary -schema-location default -schema-location "$PINNED" -schema-location "$CRDS" "$@" -; }
@@ -56,6 +58,25 @@ for c in platform/slo platform/traffic platform/experiments; do
   done
 done
 
+# alertmanager_check <root chart rendering> <dir>: platform-monitoring's Alertmanager configuration passes amtool
+# check-config (the Alertmanager version kube-prometheus-stack runs); its texts render every alert of
+# platform/root/ci/notify/alerts.json in every form a receiver uses
+alertmanager_check() {
+  local info t out
+  rm -rf "$2"
+  info=$("$PY" -I scripts/alertmanager-config.py "$1" "$2")
+  $AMTOOL check-config "$2/alertmanager.yaml" > "$tmp/amtool.log" 2>&1 || { sed 's/^/    /' "$tmp/amtool.log"; echo "✗ amtool check-config"; exit 1; }
+  if ls "$2"/*.tmpl > /dev/null 2>&1; then
+    for t in slo.title slo.text slo.telegram slo.email.html slo.ntfy; do
+      out=$($AMTOOL template render --template.glob="$2/*.tmpl" --template.data=platform/root/ci/notify/alerts.json \
+        --template.text="{{ template \"$t\" . }}")
+      case "$out" in *storefront-prod*) ;; *) echo "✗ template $t: $out"; exit 1 ;; esac
+    done
+    info="$info, texts render"
+  fi
+  echo "    amtool: $info"
+}
+
 # clusters <platform.yaml>: the names of its clusters, one per line
 clusters() { "$PY" -I -c 'import sys, yaml; print("\n".join(yaml.safe_load(open(sys.argv[1]))["clusters"]))' "$1"; }
 
@@ -64,9 +85,23 @@ for v in platform/root/ci/*.yaml; do
   for cl in $(clusters "$v"); do
     echo "  $v cluster=$cl"
     helm lint --quiet --strict platform/root -f "$v" --set "cluster=$cl" > /dev/null
-    helm template slo-platform platform/root --namespace argocd -f "$v" --set "cluster=$cl" | kc
+    helm template slo-platform platform/root --namespace argocd -f "$v" --set "cluster=$cl" > "$tmp/root.yaml"
+    kc < "$tmp/root.yaml"
+    alertmanager_check "$tmp/root.yaml" "$tmp/am-$cl"
   done
 done
+
+# Alertmanager's configuration as kube-prometheus-stack (the pinned version) writes it into its Secret: what the
+# cluster loads must be what the root chart meant (numbers such as Telegram chat IDs survive the trip)
+echo "• Alertmanager configuration through kube-prometheus-stack (platform/root/ci/notify.yaml, prod)"
+kps=$(sed -n 's/^ *targetRevision: \([0-9][0-9.]*\).*/\1/p' platform/root/templates/platform-monitoring.yaml)
+helm template slo-platform platform/root --namespace argocd -f platform/root/ci/notify.yaml --set cluster=prod > "$tmp/root.yaml"
+"$PY" -I scripts/alertmanager-config.py --values "$tmp/root.yaml" "$tmp/kps-values.yaml"
+helm template kps kube-prometheus-stack --repo https://prometheus-community.github.io/helm-charts --version "$kps" \
+  --namespace monitoring -f "$tmp/kps-values.yaml" > "$tmp/kps.yaml"
+"$PY" -I scripts/alertmanager-config.py --compare "$tmp/root.yaml" "$tmp/kps.yaml" | sed 's/^/    /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || { echo "✗ kube-prometheus-stack $kps changes the configuration"; exit 1; }
+echo "  kube-prometheus-stack $kps: the same configuration and texts"
 
 echo "• instance assembled from examples/ (scripts/render.py)"
 : > "$tmp/apps"

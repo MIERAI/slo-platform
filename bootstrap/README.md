@@ -5,8 +5,9 @@ cannot install for itself; everything after that comes from Git:
 
 1. **Argo CD** (pinned argo-cd chart; server without TLS, Dex and notifications off, Git polled every 30 s).
 2. **Repository credentials** for the product and the instance repository, when a git token is given.
-3. **Namespaces and Secrets**: `monitoring/<grafana.adminSecret>` (Grafana's admin login), the applications' Secrets
-   from the secrets file, and `slo-experiments/git-credentials` on lab clusters (the daily regression clones both
+3. **Namespaces and Secrets**: `monitoring/<grafana.adminSecret>` (Grafana's admin login),
+   `monitoring/alertmanager-notify` (the notification receivers' secrets from the secrets file's `notify:`; always
+   created, empty without any), the applications' Secrets from the secrets file, and `slo-experiments/git-credentials` on lab clusters (the daily regression clones both
    repositories).
 4. **The root Application** `argocd/slo-platform`: the product's `platform/root` chart at `product.version`, with the
    instance's `platform.yaml` as its values. The chart renders every platform Application, the ApplicationSet for
@@ -91,6 +92,7 @@ the file the cluster runs on generated throwaway values.
 ```yaml
 git: { token: ghp_… }              # Argo CD repository credentials (product + instance) and the regression's clone
 grafana: { adminPassword: … }      # → Secret monitoring/<grafana.adminSecret>; random when absent
+notify: { telegramBotToken: … }    # → Secret monitoring/alertmanager-notify (docs/configuration.md#notify)
 secrets:                           # your applications' Secrets: namespace → Secret name → key/value
   shop-prod: { db-credentials: { username: shop, password: … } }
 ```

@@ -311,6 +311,85 @@ class Check(Tmp):
         self.assertIn("1 problem(s)", err.getvalue())
 
 
+class Notify(Tmp):
+    """notify: the product's real values.schema.json, the secret keys receivers need, the warnings of `check`."""
+    PROD = [{"name": "home", "role": "prod", "runtime": "k3s", "objectStorage": "none"}] + LAB
+
+    def setUp(self):
+        super().setUp()
+        self.d = self.instance(examples=(), clusters=self.PROD)
+        self.p = os.path.join(self.d, "platform.yaml")
+
+    def set_notify(self, notify):
+        with open(self.p) as f:
+            data = yaml.safe_load(f)
+        data["notify"] = notify
+        with open(self.p, "w") as f:
+            yaml.safe_dump(data, f)
+
+    def secrets(self, cluster, notify):
+        os.makedirs(os.path.join(self.d, "secrets"), exist_ok=True)
+        with open(os.path.join(self.d, "secrets", f"{cluster}.sops.yaml"), "w") as f:   # as SOPS leaves it: keys readable
+            yaml.safe_dump({"notify": {k: "ENC[AES256_GCM,data:x,type:str]" for k in notify}, "sops": {"age": []}}, f)
+
+    def test_schema(self):
+        ok = {"language": "ja", "page": [{"type": "telegram", "chatId": "-100123"}, {"type": "ntfy", "topic": "x"}],
+              "ticket": [{"type": "email", "to": "a@b.c", "from": "d@e.f", "smarthost": "smtp:587"}],
+              "deadman": {"url": "https://hc-ping.com/x", "interval": "1m"}}
+        self.set_notify(ok)
+        self.assertEqual(sp.check(self.d), [])   # the product's values.schema.json (sp.PRODUCT)
+        for notify, needle in [
+                ({"page": [{"type": "sms"}]}, ".notify.page[0].type"),
+                ({"page": [{"type": "telegram"}]}, "chatId is required"),
+                ({"page": [{"type": "telegram", "chatId": 1, "token": "x"}]}, ".notify.page[0].token: unknown key"),
+                ({"page": [{"type": "slack", "url": "https://hooks.slack.com/x"}]}, ".notify.page[0].url: unknown key"),
+                ({"ticket": [{"type": "ntfy", "topic": "a b"}]}, ".notify.ticket[0].topic"),
+                ({"deadman": {}}, ".notify.deadman"),
+                ({"pager": []}, ".notify.pager: unknown key")]:
+            with self.subTest(needle):
+                self.set_notify(notify)
+                problems = sp.check(self.d)
+                self.assertTrue(any(needle in p for p in problems), f"{needle!r} not in {problems}")
+
+    def test_secret_keys(self):
+        self.assertEqual(sp.notify_secret_keys({}), {})
+        keys = sp.notify_secret_keys({
+            "page": [{"type": "telegram", "chatId": 1}, {"type": "ntfy", "topic": "t"},
+                     {"type": "ntfy", "topic": "t", "secretKey": "ntfyToken"}, {"type": "pushover"}],
+            "ticket": [{"type": "email", "to": "a", "from": "b", "smarthost": "c:1"},
+                       {"type": "email", "to": "a", "from": "b", "smarthost": "c:1", "username": "u", "secretKey": "smtp2"},
+                       {"type": "webhook", "url": "http://x"}, {"type": "webhook"}, {"type": "slack", "secretKey": "s2"}],
+            "deadman": {"interval": "1m"}})
+        self.assertEqual(sorted(keys), ["deadmanUrl", "ntfyToken", "pushoverToken", "pushoverUserKey", "s2", "smtp2",
+                                        "telegramBotToken", "webhookUrl"])
+        self.assertEqual(keys["telegramBotToken"], "notify.page[0] (telegram)")
+        self.assertEqual(sp.notify_secret_keys({"deadman": {"url": "https://x"}}), {})
+
+    def test_warnings(self):
+        self.set_notify({"page": [{"type": "telegram", "chatId": 1}], "ticket": [{"type": "discord"}]})
+        w = sp.notify_warnings(self.d)
+        self.assertEqual(len(w), 1)
+        self.assertIn("secrets/home.sops.yaml: missing", w[0])          # only the prod cluster
+        self.secrets("home", ["telegramBotToken"])
+        self.assertEqual(sp.notify_warnings(self.d), ["secrets/home.sops.yaml: notify.discordWebhookUrl missing "
+                                                      "(used by notify.ticket[0] (discord))"])
+        self.secrets("home", ["telegramBotToken", "discordWebhookUrl"])
+        self.assertEqual(sp.notify_warnings(self.d), [])
+        with redirect_stderr(io.StringIO()) as err, redirect_stdout(io.StringIO()):
+            self.secrets("home", ["telegramBotToken"])
+            self.assertEqual(sp.main(["check", self.d]), 0)               # a warning, not a problem
+        self.assertIn("! secrets/home.sops.yaml: notify.discordWebhookUrl missing", err.getvalue())
+
+    def test_skeleton_lists_every_default_key(self):
+        text = sp.SECRETS_SKELETON.format(cluster="c", path="p")
+        self.assertEqual(yaml.safe_load(text), {"secrets": {}})           # everything else commented out
+        for keys in sp.NOTIFY_SECRETS.values():
+            for _, default, *_ in keys:
+                if default:
+                    self.assertIn(f"#   {default}: ", text)
+        self.assertIn("#   deadmanUrl: ", text)
+
+
 class Upgrade(Tmp):
     def test_block_style_keeps_comments(self):
         d = self.instance([])
