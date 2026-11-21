@@ -251,11 +251,13 @@ def check_platform(p, problems, product=None):
         errs = validate(merged, schema)
     else:
         errs = validate(p, SCHEMA)
-    kust_values = {f".components.{c}.values: unknown key" for c in KUSTOMIZE_COMPONENTS}
+    kust_values = re.compile(r"^(?:\.clusters\.[^.]+)?\.components\.(%s)\.values: unknown key$"
+                             % "|".join(re.escape(c) for c in KUSTOMIZE_COMPONENTS))
     for e in dict.fromkeys(errs):
-        if e in kust_values:
-            c = e.split(".")[2]
-            problems.append(f"platform.yaml: .components.{c}.values: {c} is installed from kustomize manifests, not a "
+        m = kust_values.match(e)
+        if m:
+            c = m.group(1)
+            problems.append(f"platform.yaml: {e.split(': ')[0]}: {c} is installed from kustomize manifests, not a "
                             f"Helm chart: it takes no values (only enabled; Helm-sourced: {', '.join(HELM_COMPONENTS)})")
         else:
             problems.append(f"platform.yaml: {e}")

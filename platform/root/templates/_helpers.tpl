@@ -22,10 +22,13 @@ repoURL: {{ .Values.product.repo }}
 targetRevision: {{ .Values.product.version | quote }}
 {{- end }}
 
-{{- /* root.component: components.<name> of platform.yaml with its defaults, as JSON: {enabled, values} */}}
+{{- /* root.component: components.<name> of platform.yaml with its defaults, as JSON: {enabled, values};
+clusters.<cluster>.components.<name> deep-merged over it (clusters differ: a small lab drops what prod keeps) */}}
 {{- define "root.component" -}}
 {{- $root := index . 0 }}{{ $name := index . 1 }}
-{{- $c := index ($root.Values.components | default dict) $name | default dict }}
+{{- $top := index ($root.Values.components | default dict) $name | default dict }}
+{{- $cl := index ((index ($root.Values.clusters | default dict) ($root.Values.cluster | default "") | default dict).components | default dict) $name | default dict }}
+{{- $c := include "root.deepMerge" (dict "base" $top "over" $cl) | fromJson }}
 {{- dict "enabled" (ne (toString (dig "enabled" true $c)) "false") "values" (dig "values" dict $c) | toJson }}
 {{- end }}
 

@@ -747,6 +747,161 @@
                 }
               }
             }
+          },
+          "components": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Per cluster: deep-merged over the top-level components (same keys) for this cluster only.",
+            "properties": {
+              "monitoring": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  },
+                  "values": {
+                    "type": "object",
+                    "description": "Deep-merged into the component's Helm values (maps merge, lists and scalars replace)."
+                  }
+                },
+                "description": "kube-prometheus-stack (Prometheus, Alertmanager, Grafana): Helm-sourced."
+              },
+              "pyrra": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  }
+                },
+                "description": "Pyrra (SLO operator and UI): kustomize-sourced, so no `values`."
+              },
+              "blackbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  },
+                  "values": {
+                    "type": "object",
+                    "description": "Deep-merged into the component's Helm values (maps merge, lists and scalars replace)."
+                  }
+                },
+                "description": "blackbox exporter (probe SLOs): Helm-sourced."
+              },
+              "chaos-mesh": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  },
+                  "values": {
+                    "type": "object",
+                    "description": "Deep-merged into the component's Helm values (maps merge, lists and scalars replace)."
+                  }
+                },
+                "description": "Chaos Mesh (fault injection): Helm-sourced."
+              },
+              "cert-manager": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  }
+                },
+                "description": "cert-manager: kustomize-sourced, so no `values`."
+              },
+              "argo-rollouts": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  }
+                },
+                "description": "Argo Rollouts: kustomize-sourced, so no `values`."
+              },
+              "cnpg": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  }
+                },
+                "description": "CloudNativePG operator and Barman Cloud plugin: kustomize-sourced, so no `values`."
+              },
+              "experiments": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  },
+                  "values": {
+                    "type": "object",
+                    "description": "Deep-merged into the component's Helm values (maps merge, lists and scalars replace)."
+                  }
+                },
+                "description": "the daily experiment regression (lab clusters; chart platform/experiments): Helm-sourced."
+              },
+              "kyverno": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  }
+                },
+                "description": "Kyverno (only with optional.policies): kustomize-sourced, so no `values`."
+              },
+              "policies": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  }
+                },
+                "description": "the admission policies (only with optional.policies): kustomize-sourced, so no `values`."
+              },
+              "object-storage": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "false: not installed."
+                  }
+                },
+                "description": "SeaweedFS (only on clusters with objectStorage: in-cluster): kustomize-sourced, so no `values`."
+              }
+            }
           }
         }
       }

@@ -4,6 +4,9 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+### Added
+- `clusters.<name>.components`: per-cluster component settings, deep-merged over `components` (clusters differ).
+
 ## [0.1.0] - 2026-11-21
 
 ### Added
