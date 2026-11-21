@@ -29,7 +29,7 @@ outage — until the outage. An alert that has never fired is a hope, not a safe
 | **Declare** | SLOs in your application's `app.yaml` — availability, latency, probe, freshness (age), ratio, bool — one declaration for every environment |
 | **Alert** | Multi-window, multi-burn-rate alerts (page / ticket), "SLI absent" tickets, sensible routing and inhibition |
 | **Verify** | Fault experiments with predictions committed before the run (which alert fires within how long, what stays quiet), run daily as a regression on a lab cluster; a negative test proves normal traffic pages nobody |
-| **Gate** *(planned)* | Error budget left decides whether a promotion to prod needs a reason, or only fixes may ship — today the budgets are there (Pyrra); the promotion gate itself is not part of the platform yet |
+| **Gate** *(planned)* | Error budget left decides whether a promotion to prod needs a reason, or only fixes may ship — today the budgets are there (Pyrra); the promotion gate itself is not part of the platform yet (the reference installation runs one from its private delivery board) |
 | **Watch the watcher** | External probes from outside the cluster and a dead man's switch for the alerting pipeline itself |
 
 ## How it works
@@ -63,6 +63,20 @@ flowchart TB
 - The **same** platform and applications run on both clusters. Faults only ever go to the lab (its nodes must carry
   `slo-platform/lab=true`, or the runner refuses): an alert that fires there fires the same way in prod.
 - Under the hood: Argo CD (GitOps), kube-prometheus-stack, Pyrra (SLO rules), blackbox exporter, Chaos Mesh, k6.
+
+## Reference installation
+
+slo-platform runs the maintainer's own two k3s clusters: `laptop` (prod) and `lab` (fault experiments and the daily
+regression).
+
+| Repository | Role |
+|---|---|
+| [gitops-manifests](https://github.com/MIERAI/gitops-manifests) | The live instance repository: its [`platform.yaml`](https://github.com/MIERAI/gitops-manifests/blob/main/platform.yaml) and the applications, synced by Argo CD to both clusters |
+| [infrastructure-live](https://github.com/MIERAI/infrastructure-live) | Bootstraps the clusters (OpenTofu, Ansible, SOPS) |
+| [storefront](https://github.com/MIERAI/storefront), [sample-app](https://github.com/MIERAI/sample-app) | Source of the example applications; [`examples/`](examples/) deploys their images |
+| [gitops-platform-blueprint](https://github.com/MIERAI/gitops-platform-blueprint) | The principles behind it, and the shared CI workflows (`build-image.yml`, `promote-dev.yml`) the example apps use |
+
+The error-budget promotion gate of the reference installation lives in a private delivery board (not public).
 
 ## Layout
 
