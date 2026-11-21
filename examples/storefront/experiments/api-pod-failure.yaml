@@ -1,0 +1,20 @@
+hypothesis: >-
+  One of the two api pods fails for 10 minutes (crash loop, a lost node). The other one serves; Kubernetes takes the
+  failed pod out of the Service. Nobody should be paged — a page here would be noise.
+namespace: storefront-dev
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: { name: api-one-down }
+    spec:
+      action: pod-failure
+      mode: one
+      selector: { labelSelectors: { app: api } }
+      duration: 10m
+effect: { query: 'count(kube_pod_status_ready{namespace="storefront-dev", pod=~"api-.*", condition="false"} == 1) >= 1', within: 3m }   # one api pod not ready
+timeout: 10m
+hold: 10m
+expect:
+  fire: []
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev } }

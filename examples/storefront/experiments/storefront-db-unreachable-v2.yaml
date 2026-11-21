@@ -1,0 +1,33 @@
+hypothesis: >-
+  Same fault and predictions as storefront-db-unreachable (Postgres cannot be reached by web and the workers;
+  order-intake pages, order-freshness's SLI goes absent, the page SLOs stay quiet), with the absent ticket's window
+  corrected. The first run: the freshness gauge vanished within 30s, the SLOMetricAbsent rule (for 6m, in a rule
+  group evaluated every 150s) fired at 8.7 min, and the runner saw it at 10.9 min — the runner sees alerts of the
+  150s groups up to ~2.3 min after Prometheus marks them firing (every other alert: ≤15s; not yet explained).
+  Prediction: SLOMetricAbsent for order-freshness within 13 min; order-intake pages within 10 min.
+namespace: storefront-dev
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: NetworkChaos
+    metadata: { name: db-unreachable }
+    spec:
+      action: loss
+      mode: all
+      selector: { labelSelectors: { cnpg.io/cluster: postgres } }
+      direction: to
+      target:
+        mode: all
+        selector: { expressionSelectors: [{ key: app, operator: In, values: [web, worker] }] }
+      loss: { loss: "100" }
+      duration: 30m
+timeout: 15m
+expect:
+  fire:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-intake, severity: page, long: 1h }, within: 10m }
+    - { alert: SLOMetricAbsent, labels: { namespace: storefront-dev, slo: storefront-order-freshness }, within: 13m }
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-freshness } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-completeness } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-web-availability } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-web-probe } }
+recover: 15m

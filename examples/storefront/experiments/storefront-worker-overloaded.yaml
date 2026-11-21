@@ -1,0 +1,31 @@
+hypothesis: >-
+  Like worker-slow, but every packet from Postgres to the workers is delayed by 8s: ~32s per order, ~3.7 orders/min
+  for two workers, below dev's daytime arrivals (4-6/min in the compressed day's hours 8-20; run it then). Every
+  order is at least 32s old when done, and the backlog grows. Prediction, written before the run: order-freshness
+  pages within 15 min (stale for good after a few minutes, then 4.2 min of stale samples + for 2m). The backlog grows
+  by ~1-2 orders/min, so the oldest order stays under the 5 min completeness deadline during the run:
+  order-completeness quiet. web is not delayed: intake quiet. (At night arrivals are below capacity: the hypothesis
+  does not hold then — that would be a different experiment.)
+namespace: storefront-dev
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: NetworkChaos
+    metadata: { name: worker-db-delay-8s }
+    spec:
+      action: delay
+      mode: all
+      selector: { labelSelectors: { cnpg.io/cluster: postgres } }
+      direction: to
+      target:
+        mode: all
+        selector: { labelSelectors: { app: worker } }
+      delay: { latency: 8s, jitter: 0ms }
+      duration: 30m
+timeout: 15m
+expect:
+  fire:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-freshness, severity: page, long: 1h }, within: 15m }
+  quiet:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-completeness } }
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-order-intake } }
+recover: 15m

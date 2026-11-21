@@ -1,0 +1,21 @@
+hypothesis: >-
+  Every sample-app pod fails — users get connection errors on /hello. That is the worst outage there is, so the
+  availability SLO must page within 10 minutes — even though no pod is left to count the failed requests.
+namespace: sample-app-dev
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: { name: sample-app-all-down }
+    spec:
+      action: pod-failure
+      mode: all
+      selector: { labelSelectors: { app: sample-app } }
+      duration: 30m
+effect: { query: 'max(probe_success{namespace="sample-app-dev"}) == 0', within: 3m }   # the probe fails
+timeout: 15m
+expect:
+  fire:
+    # wave 1: the in-pod SLI (hello-availability) cannot see this — no pod is left to count the failures. The probe
+    # SLO (outside the pods, platform-blackbox) must.
+    - { alert: ErrorBudgetBurn, labels: { namespace: sample-app-dev, slo: sample-app-hello-probe, severity: page, long: 1h }, within: 10m }
+recover: 15m

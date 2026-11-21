@@ -1,0 +1,21 @@
+hypothesis: >-
+  Every api pod fails (a bad release, a dependency of api down). web still answers, with pages without products
+  (degraded); web's availability SLO must page. api has no pods left, so its own SLI disappears: its "SLI absent"
+  ticket is the meta-signal.
+namespace: storefront-dev
+fault:
+  - apiVersion: chaos-mesh.org/v1alpha1
+    kind: PodChaos
+    metadata: { name: api-all-down }
+    spec:
+      action: pod-failure
+      mode: all
+      selector: { labelSelectors: { app: api } }
+      duration: 30m
+effect: { query: 'sum(rate(upstream_requests_total{namespace="storefront-dev", code="error"}[1m])) > 0', within: 3m }   # web gets no answer from api
+timeout: 15m
+expect:
+  fire:
+    - { alert: ErrorBudgetBurn, labels: { namespace: storefront-dev, slo: storefront-web-availability, severity: page, long: 1h }, within: 10m }
+    - { alert: SLOMetricAbsent, labels: { namespace: storefront-dev, slo: storefront-api-availability }, within: 15m }
+recover: 15m

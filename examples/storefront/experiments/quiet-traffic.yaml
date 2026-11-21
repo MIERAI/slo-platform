@@ -1,0 +1,10 @@
+hypothesis: >-
+  Normal traffic — a compressed day with quiet nights, peaks, bursts and 5% client errors — pages nobody. The negative
+  test: every page under normal conditions is noise (docs/concepts.md, 2).
+namespace: storefront-prod
+ignore: '.+-(dev|staging)'   # only prod notifies (the example routing): dev / staging pages are not noise anyone hears
+fault: []
+timeout: 2h
+hold: 2h
+expect:
+  fire: []
