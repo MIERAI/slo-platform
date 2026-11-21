@@ -1,25 +1,39 @@
-# Your platform instance, in one file (draft — the contract is fixed in P2, docs/roadmap.md).
-# `init` reads it and writes your instance repository; nothing else needs editing.
-version: v0.1.0                    # the slo-platform release this instance runs (upgrade = change it)
+# platform.yaml of an instance repository (apiVersion slo-platform/v1; reference: docs/configuration.md).
+# `bin/slo-platform init` writes one like this; `slo-platform check` validates it; it is also the values of the
+# platform's root chart (platform/root), which Argo CD renders once per cluster.
+apiVersion: slo-platform/v1
 
-owner: your-org                    # GitHub organization or user of your instance repository
-registry: ghcr.io/your-org         # where your application images live
-timezone: Etc/UTC                  # schedules (daily regression), quiet hours, the day shape of synthetic traffic
-language: en                       # notification texts: en | zh | ja
+product:                           # the platform: this repository at a version
+  repo: https://github.com/MIERAI/slo-platform.git
+  version: main                    # a git tag or branch; upgrade = change it (`slo-platform upgrade --version <ref>`)
 
-clusters:
+instance:                          # your instance repository: apps/*/app.yaml, their manifests and experiments
+  repo: https://github.com/your-org/slo-instance.git
+  revision: main
+
+timezone: Etc/UTC                  # IANA name: the regression's schedule, quiet hours, the synthetic users' day
+language: en                       # en | zh | ja (notification texts)
+
+clusters:                          # one root Application per cluster; bootstrap one cluster at a time by its name
+  lab:
+    role: lab                      # experiments + the daily regression; notifies nobody
+    runtime: kind                  # kind | k3s | generic (Chaos Mesh's container runtime socket)
+    objectStorage: none            # none | in-cluster (an S3-compatible store for database backups)
   prod:
-    context: my-prod               # kubeconfig context (never the current context implicitly)
-    runtime: k3s                   # kind | k3s | generic   (container runtime socket for Chaos Mesh, storage defaults)
-    objectStorage: in-cluster      # in-cluster | external  (database backups)
-  lab:                             # optional: where fault experiments run. Faults never touch a cluster without this role.
-    context: my-lab
+    role: prod                     # notifies; never runs experiments
     runtime: k3s
+    objectStorage: in-cluster
 
-notify:                            # who hears what (Alertmanager receivers); only the prod cluster notifies
-  page:   { type: ntfy, url: "https://ntfy.sh/<your-topic>" }     # ntfy | slack | webhook | email
-  ticket: { type: webhook, url: "http://tickets.example/hook" }
-  quietHours: "21-8"               # pages still go out; spoken / noisy receivers wait
+optional:
+  policies: false                  # Kyverno + the workload baseline (admission policies)
+
+grafana:
+  adminSecret: grafana-admin       # Secret in monitoring with admin-user, admin-password (created by bootstrap)
 
 regression:
-  schedule: "0 9 * * *"            # daily fault regression on the lab cluster
+  schedule: "0 9 * * *"            # the daily fault regression on lab clusters, in `timezone`
+
+traffic:
+  dayMinutes: 1440                 # the synthetic users' day; less compresses it (60: one day per hour, for tests)
+
+notify: {}                         # who hears what: P3 (accepted and ignored for now)

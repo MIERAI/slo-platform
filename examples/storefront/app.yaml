@@ -11,7 +11,7 @@ environments:
   - { name: dev, trafficScale: 0.3 }
   - name: staging
     promotion: { from: dev, soak: 5m }
-    trafficScale: 0.3
+    trafficScale: 0.43             # the reference installation's staging load (≈ 90 rpm at the peak)
   - name: prod
     promotion: { from: staging, soak: 10m }
     trafficScale: 1
@@ -23,13 +23,14 @@ services:                        # released and promoted (its image) on its own
   - { name: api, image: ghcr.io/mierai/storefront-api, component: storefront }
   - { name: worker, image: ghcr.io/mierai/storefront-worker, component: storefront-worker }
 # Synthetic users (platform/traffic): a day profile with quiet nights and two bursts. Shares of the mix: 87% the page,
-# 9% orders (1 in 20 with an amount the API rejects: a 4xx, a valid event, not an error), 4% stale links (404).
+# 9% orders (amounts 10..1999; 1 in 20 with an amount the API rejects: a 4xx, a valid event, not an error), 4% stale
+# links (404).
 # 210 rpm at the peak in prod (scale 1): orders ≈ 6/min at dev's peak.
 traffic:
   peakRpm: 210
   requests:
     - { weight: 65, method: GET, service: web, port: 8080, path: "/" }
-    - { weight: 7, method: POST, service: web, port: 8080, path: /orders, body: '{"amount": 100}',
+    - { weight: 7, method: POST, service: web, port: 8080, path: /orders, body: '{"amount": 1{rand}}',
         badBody: '{"amount": 0}', badRate: 0.05 }
     - { weight: 3, method: GET, service: web, port: 8080, path: /products/old-link }               # stale link: 404
 # SLOs: rendered per environment into Pyrra objectives and multi-window burn-rate alerts.
