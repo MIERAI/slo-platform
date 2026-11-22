@@ -70,6 +70,18 @@ platform.yaml has no components.<name>.values, else with them deep-merged over i
 {{- if eq $apps "." }}*/app.yaml{{ else }}{{ $apps }}/*/app.yaml{{ end }}
 {{- end }}
 
+{{- /* root.appsFiles: the git generator's files (flow sequence): root.appsGlob, then for each application of this
+cluster's clusters.<name>.applications.exclude (directory names) `{ path: "<apps>/<app>/app.yaml", exclude: true }`;
+without the key exactly [{ path: "<glob>" }], as before it existed */}}
+{{- define "root.appsFiles" -}}
+{{- $c := include "root.cluster" . | fromJson }}
+{{- $apps := .Values.instance.apps | default "apps" | toString -}}
+[{ path: {{ include "root.appsGlob" . | quote }} }
+{{- range ((($c.applications | default dict).exclude) | default list) }}
+{{- $f := ternary (printf "%s/app.yaml" .) (printf "%s/%s/app.yaml" $apps .) (eq $apps ".") }}, { path: {{ $f | quote }}, exclude: true }
+{{- end }}]
+{{- end }}
+
 {{- /* root.experiments: the daily regression's experiment directories (globs), as a JSON list: regression.experiments,
 default <instance.apps>/<every app>/experiments */}}
 {{- define "root.experiments" -}}
