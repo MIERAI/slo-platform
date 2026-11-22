@@ -60,7 +60,8 @@ Exits non-zero with one line per problem:
 - `platform.yaml` against `platform/root/values.schema.json` of the product checkout the command runs from — the file
   Helm validates the root chart's values with (the chart's `values.yaml` defaults merged in, as Helm does) — and the
   time zone against the IANA database.
-- `clusters.<name>.extras`: names unique per cluster, every `path` a directory of the instance; `components.<name>`:
+- `clusters.<name>.extras`: names unique per cluster, every `path` a directory of the instance;
+  `clusters.<name>.applications.exclude`: applications of this instance, each once; `components.<name>`:
   a known component, and `values` only for the Helm-sourced ones ([Components](#components)); namespace labels and
   annotations (`applications.*`, app.yaml `namespace`): valid keys, string values (labels: valid label values), none of
   the platform's own (`slo-platform/*`, `chaos-mesh.org/inject`).
@@ -104,6 +105,7 @@ once per cluster with `cluster: <name>` added. An annotated example: [platform.e
 | `clusters.<name>.runtime` | `generic` | `kind`, `k3s`, `generic`: Chaos Mesh's container runtime socket (`/run/k3s/containerd/containerd.sock` on k3s, `/run/containerd/containerd.sock` otherwise) |
 | `clusters.<name>.objectStorage` | `none` | `in-cluster`: an S3-compatible store (SeaweedFS) for database backups |
 | `clusters.<name>.extras` | `[]` | Your own components on that cluster: `[{ name, path }]`, [below](#extras) |
+| `clusters.<name>.applications.exclude` | `[]` | Applications (directory names under `instance.apps`) this cluster does not run, [below](#applications-per-cluster) |
 | `clusters.<name>.components` | `{}` | Same keys as `components`, for that cluster only, deep-merged over the top-level ones — e.g. a small lab: `{ monitoring: { values: { grafana: { enabled: false } } } }` |
 | `optional.policies` | `false` | Kyverno and the workload baseline (admission policies in application namespaces) |
 | `applications.namespaceLabels` | `{}` | Labels of every application namespace `<app>-<env>` (app.yaml `namespace.labels` is merged over them) |
@@ -153,6 +155,26 @@ clusters:
 ```
 
 Names: DNS labels, unique per cluster (at most 46 characters). `path`: relative, no `..`; `check` requires it to exist.
+
+### Applications per cluster
+
+Every cluster runs every application of the instance, unless its `clusters.<name>.applications.exclude` names it (the
+application's directory name). The ApplicationSet then makes no Applications of that application on that cluster:
+its git generator gets one more `files` entry, `{ path: <apps>/<app>/app.yaml, exclude: true }`; without the key
+(or with an empty list) the ApplicationSet is exactly as before. Use it when clusters differ in what they run: a small
+lab that keeps one application out to make room for another, or an application only prod has.
+
+```yaml
+clusters:
+  lab:
+    role: lab
+    applications: { exclude: [storefront] }   # every application but storefront
+```
+
+Excluding an application that already runs there removes its Applications, not its workloads (the ApplicationSet
+preserves resources on deletion): delete the namespaces `<app>-<env>` yourself afterwards. Fault experiments that
+target an excluded application's namespaces fail on that cluster: move or skip them. `check` requires each name to
+be an application of the instance.
 
 ## Components
 

@@ -12,6 +12,9 @@ mirrored by [scripts/render.py](../scripts/render.py)):
 | `slos` × environment | `<name>-slo-<env>` | chart [platform/slo](../platform/slo): Pyrra objectives, probes, the experiment runner's rights |
 | `traffic` × environment (unless `trafficScale: 0`) | `<name>-traffic-<env>` | chart [platform/traffic](../platform/traffic): synthetic users |
 
+Every cluster gets these Applications, unless platform.yaml leaves the application out of it
+([`clusters.<name>.applications.exclude`](configuration.md#applications-per-cluster)).
+
 Every Application of environment `<env>` deploys into the namespace **`<name>-<env>`**, which Argo CD creates with
 
 - labels `slo-platform/app: <name>`, `slo-platform/env: <env>` (the optional admission policies select on them), and
