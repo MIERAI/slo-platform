@@ -4,6 +4,15 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-23
+
+### Added
+- `clusters.<name>.applications.exclude`: applications a cluster does not run (a small lab making room). The
+  ApplicationSet's git generator gets `exclude: true` file entries for that cluster only; without the key it renders
+  exactly as before. `check` and `scripts/render.py` follow it. A patch release on top of 0.1.1 (no 0.2.0 changes).
+
+## [0.1.1] - 2026-11-21
+
 ### Added
 - `clusters.<name>.components`: per-cluster component settings, deep-merged over `components` (clusters differ).
 

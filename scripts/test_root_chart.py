@@ -377,6 +377,28 @@ class RootChart(unittest.TestCase):
         self.assertIn('(dict "minutes" 60 "tzOffsetHours" 5.5)', patch)            # Asia/Kolkata
         self.assertNotIn("${", json.dumps(s))
 
+    def test_applications_exclude(self):
+        # clusters.<name>.applications.exclude: git generator files with exclude: true, on that cluster only
+        v = values(instance={**BASE["instance"], "apps": "."})
+        v["clusters"] = copy.deepcopy(v["clusters"])
+        v["clusters"]["lab"]["applications"] = {"exclude": ["storefront", "sample-app"]}
+        files = lambda c: render._git_generator(ok(v, c)["applications"]["spec"]["generators"])["files"]  # noqa: E731
+        self.assertEqual(files("prod"), [{"path": "*/app.yaml"}])
+        self.assertEqual(files("lab"), [{"path": "*/app.yaml"}, {"path": "storefront/app.yaml", "exclude": True},
+                                        {"path": "sample-app/app.yaml", "exclude": True}])
+        v["instance"]["apps"] = "deploy/apps"
+        self.assertEqual(files("lab")[1], {"path": "deploy/apps/storefront/app.yaml", "exclude": True})
+        # without the key (or with an empty list) the ApplicationSet is exactly what it was
+        empty = copy.deepcopy(v)
+        empty["clusters"]["lab"]["applications"] = {"exclude": []}
+        bare = copy.deepcopy(v)
+        del bare["clusters"]["lab"]["applications"]
+        self.assertEqual(ok(empty, "lab")["applications"], ok(bare, "lab")["applications"])
+        for bad in ({"exclude": ["Big"]}, {"exclude": "storefront"}, {"include": ["x"]}, {"exclude": ["a", "a"]}):
+            b = copy.deepcopy(v)
+            b["clusters"]["lab"]["applications"] = bad
+            self.assertNotEqual(helm(b, "lab")[0], 0, bad)
+
     def test_timezone_offsets(self):
         for tz, off in (("Etc/UTC", "0"), ("Asia/Tokyo", "9"), ("America/New_York", "-5"), ("Europe/Berlin", "1"),
                         ("Etc/GMT+3", "-3"), ("Asia/Kathmandu", "5.75")):
@@ -468,6 +490,28 @@ class RenderInstance(unittest.TestCase):
             docs = [d for d in yaml.safe_load_all(render.render(apps[f"extras-{cluster}"])) if d]
             self.assertEqual([(d["kind"], d["metadata"]["name"]) for d in docs], [("Application", "platform-ui")])
             self.assertNotIn("platform-kyverno", apps)       # components.kyverno.enabled: false
+
+    def test_applications_exclude_instance(self):
+        """clusters.lab.applications.exclude: render.py leaves the application out of that cluster only, as Argo CD's
+        git generator does."""
+        if not os.path.isdir(os.path.join(ROOT, "examples")):
+            self.skipTest("no examples")
+        platform = os.path.join(CHART, "ci", "existing-repo.yaml")
+        inst = render.example_instance(ROOT, platform)
+        with open(platform) as f:
+            v = yaml.safe_load(f)
+        v["clusters"]["lab"]["applications"] = {"exclude": ["storefront"]}
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        pf = os.path.join(d, "platform.yaml")
+        with open(pf, "w") as f:
+            yaml.safe_dump(v, f)
+        lab = {a["name"] for a in render.apps(ROOT, instance=inst, platform=pf, cluster="lab")}
+        laptop = {a["name"] for a in render.apps(ROOT, instance=inst, platform=pf, cluster="laptop")}
+        self.assertFalse([n for n in lab if n.startswith("storefront")], lab)
+        self.assertIn("sample-app-prod", lab)
+        self.assertTrue({"storefront-prod", "storefront-worker-dev", "storefront-slo-prod"} <= laptop)
+        self.assertEqual(laptop, {a["name"] for a in render.apps(ROOT, platform=platform, cluster="laptop")})
 
 
 if __name__ == "__main__":

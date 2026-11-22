@@ -77,7 +77,9 @@ SCHEMA = {
                              "extras": {"type": "array", "items": {
                                  "type": "object", "required": ["name", "path"], "additionalProperties": False,
                                  "properties": {"name": {"type": "string", "pattern": NAME, "maxLength": 46},
-                                                "path": {"type": "string", "pattern": rf"^{SEG}(/{SEG})*$"}}}}}}},
+                                                "path": {"type": "string", "pattern": rf"^{SEG}(/{SEG})*$"}}}},
+                             "applications": {"type": "object", "additionalProperties": False, "properties": {
+                                 "exclude": {"type": "array", "items": {"type": "string", "pattern": NAME}}}}}}},
         "optional": {"type": "object", "additionalProperties": False,
                      "properties": {"policies": {"type": "boolean"}}},
         "applications": {"type": "object", "additionalProperties": False, "properties": {
@@ -598,6 +600,16 @@ def check(instance):
             path = x.get("path") if isinstance(x, dict) else None
             if isinstance(path, str) and ".." not in path.split("/") and not os.path.isdir(os.path.join(instance, path)):
                 problems.append(f"platform.yaml: .clusters.{name}.extras[{i}].path: {path} is not a directory of the instance")
+    names = {os.path.basename(os.path.dirname(f)) for f in app_files(instance, p)}
+    for name, c in ((p or {}).get("clusters") or {}).items() if isinstance(p, dict) and isinstance(p.get("clusters"), dict) else []:
+        a = c.get("applications") if isinstance(c, dict) else None
+        x = a.get("exclude") if isinstance(a, dict) else None
+        for n in x if isinstance(x, list) else []:
+            if isinstance(n, str) and n not in names:
+                problems.append(f"platform.yaml: .clusters.{name}.applications.exclude: {n} is not an application here "
+                                f"({', '.join(sorted(names)) or 'none'})")
+        for n in sorted({n for n in x if isinstance(n, str) and x.count(n) > 1}) if isinstance(x, list) else []:
+            problems.append(f"platform.yaml: .clusters.{name}.applications.exclude: {n} twice")
     apps = {}
     for f in app_files(instance, p):
         d = os.path.dirname(f)

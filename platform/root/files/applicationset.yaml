@@ -11,7 +11,8 @@
 # when signedImages) and the annotation that lets the fault experiments target it (Chaos Mesh only injects into
 # annotated namespaces), over app.yaml's namespace.labels / namespace.annotations, over platform.yaml's
 # applications.namespaceLabels / namespaceAnnotations (filled in below as Go dict expressions). ignoreDifferences
-# (app.yaml) is passed through, with RespectIgnoreDifferences.
+# (app.yaml) is passed through, with RespectIgnoreDifferences. A cluster leaves out the applications its
+# clusters.<name>.applications.exclude names (git generator files entries with exclude: true, none without it).
 # Rendered by the root chart (templates/applicationset.yaml), which fills in the ${…} placeholders from platform.yaml.
 # scripts/render.py (appdesc.applications) renders the same way for validate.sh and the scripts: keep both in step.
 apiVersion: argoproj.io/v1alpha1
@@ -30,7 +31,7 @@ spec:
                 - git:
                     repoURL: "${INSTANCE_REPO}"
                     revision: "${INSTANCE_REVISION}"
-                    files: [{ path: "${APPS_GLOB}" }]   # the one place that says where app.yaml files live (instance.apps)
+                    files: ${APPS_FILES}   # where app.yaml files live (instance.apps), minus clusters.<name>.applications.exclude
                 # prefixed keys: the app, the component and the environment all have a name
                 - list:
                     elementsYaml: |

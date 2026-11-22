@@ -386,6 +386,18 @@ class ExistingRepository(Tmp):
             self.edit(self.p, lambda p: p["clusters"]["lab"].update(extras=[bad]))
             self.assertProblem(".clusters.lab.extras[0]")
 
+    def test_applications_exclude(self):
+        self.edit(self.p, lambda p: p["clusters"]["lab"].update(applications={"exclude": ["storefront"]}))
+        for real in (False, True):
+            self.assertEqual(self.problems(real), [])
+        self.edit(self.p, lambda p: p["clusters"]["lab"].update(applications={"exclude": ["shop"]}))
+        self.assertProblem(".clusters.lab.applications.exclude: shop is not an application here (sample-app, storefront)")
+        self.edit(self.p, lambda p: p["clusters"]["lab"].update(applications={"exclude": ["storefront"] * 2}))
+        self.assertProblem(".clusters.lab.applications.exclude: storefront twice")
+        for bad in ({"exclude": ["Big"]}, {"exclude": "storefront"}, {"include": ["storefront"]}):
+            self.edit(self.p, lambda p: p["clusters"]["lab"].update(applications=bad))
+            self.assertProblem(".clusters.lab.applications")
+
     def test_components(self):
         self.edit(self.p, lambda p: p.update(components={
             "monitoring": {"values": {"grafana": {"enabled": False}}}, "pyrra": {"enabled": False},

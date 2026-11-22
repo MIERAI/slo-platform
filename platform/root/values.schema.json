@@ -748,6 +748,24 @@
               }
             }
           },
+          "applications": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Which of the instance's applications this cluster runs.",
+            "properties": {
+              "exclude": {
+                "type": "array",
+                "default": [],
+                "uniqueItems": true,
+                "description": "Applications (directory names under instance.apps) this cluster does not run: the ApplicationSet makes no Applications for them here. Their namespaces stay (preserveResourcesOnDeletion) until you delete them.",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                  "maxLength": 63
+                }
+              }
+            }
+          },
           "components": {
             "type": "object",
             "additionalProperties": false,
