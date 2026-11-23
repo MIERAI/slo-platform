@@ -485,6 +485,17 @@ class ExistingRepository(Tmp):
         self.edit(self.p, lambda p: p.update(components={"tracing": {"values": {"x": 1}}}))
         self.assertProblem(".components.tracing.values: unknown key")
 
+    def test_logging(self):
+        ext = {"queryUrl": "http://loki.example:3100", "endpoint": "http://loki.example:3100/loki/api/v1/push"}
+        self.edit(self.p, lambda p: p.update(components={"logging": {"enabled": True, "external": ext},
+                                                         "tracing": {"enabled": True, "external": {"queryUrl": "http://t:3200"}}}))
+        for real in (False, True):
+            self.assertEqual(self.problems(real), [])
+        self.edit(self.p, lambda p: p.update(components={"logging": {"enabled": True}}))
+        self.assertProblem(".components.logging: enabled on cluster lab needs external.queryUrl (an external Loki's")
+        self.edit(self.p, lambda p: p.update(components={"logging": {"enabled": True, "external": {"queryUrl": "loki"}}}))
+        self.assertProblem(".components.logging.external.queryUrl")
+
     def test_namespace_metadata(self):
         self.edit(self.p, lambda p: p.update(applications={"namespaceLabels": {"example.com/policies": "enforced"},
                                                            "namespaceAnnotations": {"example.com/note": "any text"}}))

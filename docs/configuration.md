@@ -126,6 +126,9 @@ once per cluster with `cluster: <name>` added. An annotated example: [platform.e
 | `components.tracing.enabled` | `false` | Opt-in: Grafana gets a Tempo datasource for `components.tracing.external` ([Tracing](#tracing)) |
 | `components.tracing.external.queryUrl` | — | An external Tempo's HTTP API as Grafana reaches it (`http://tempo.example:3200`); required when enabled |
 | `components.tracing.external.endpoint` | — | Its OTLP/HTTP receiver (`http://tempo.example:4318`): recorded for people and tools, not passed into applications |
+| `components.logging.enabled` | `false` | Opt-in: Grafana gets a Loki datasource for `components.logging.external` ([Logs](#logs)) |
+| `components.logging.external.queryUrl` | — | An external Loki's HTTP API as Grafana reaches it (`http://loki.example:3100`); required when enabled |
+| `components.logging.external.endpoint` | — | Its push API (`http://loki.example:3100/loki/api/v1/push`): recorded for your log collector, the platform installs none |
 | `grafana.adminSecret` | `grafana-admin` | Secret in `monitoring` with keys `admin-user`, `admin-password`; bootstrap creates it |
 | `regression.schedule` | `0 9 * * *` | Cron schedule of the daily experiment regression on lab clusters, in `timezone` |
 | `regression.experiments` | `<instance.apps>/*/experiments` | Experiment directories (a glob or a list of globs, relative to the instance root): the daily regression runs their `*.yaml`, `check` checks them |
@@ -241,6 +244,7 @@ The platform components the root chart installs, each an Argo CD Application `pl
 | `kyverno`, `policies` | kustomize | with `optional.policies: true` |
 | `object-storage` | kustomize | clusters with `objectStorage: in-cluster` |
 | `tracing` | none: a Grafana datasource for an external Tempo | only with `enabled: true` (opt-in): [Tracing](#tracing) |
+| `logging` | none: a Grafana datasource for an external Loki | only with `enabled: true` (opt-in): [Logs](#logs) |
 
 - `enabled: false` drops the component (its Application; Argo CD prunes what it installed). `enabled: true` is the
   default and does not override the condition in the last column. What depends on a dropped component is yours to
@@ -300,6 +304,23 @@ clusters:
   (2048 spans by default) — requests are not slowed or failed; you see fewer traces.
 - `check` refuses `enabled: true` without `external.queryUrl` (top level or on a cluster), and URLs that are not
   `http(s)://`.
+
+### Logs
+
+`logging` works like [Tracing](#tracing), for Grafana Loki: opt-in, external only — the cluster's Grafana gets a Loki
+datasource (name `Loki`, uid `loki`, provisioning file `loki.yaml` next to `tempo.yaml`). The platform installs no
+Loki and no collector: ship the logs with your own (e.g. Grafana Alloy through [extras](#extras)) to
+`external.endpoint`, and give it a bounded queue so that an unreachable Loki costs log lines, never the workloads.
+
+```yaml
+components:
+  logging:
+    external:
+      queryUrl: http://loki.example:3100                      # the datasource's URL (required when enabled)
+      endpoint: http://loki.example:3100/loki/api/v1/push     # where your collector pushes
+clusters:
+  prod: { role: prod, components: { logging: { enabled: true } } }
+```
 
 ## An existing repository
 

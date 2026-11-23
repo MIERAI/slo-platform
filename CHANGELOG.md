@@ -5,6 +5,10 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- `components.logging` (opt-in, external only), the same shape as `components.tracing`: `enabled` +
+  `external.queryUrl` (and `external.endpoint`, the push API your collector uses, for reference) give
+  platform-monitoring's Grafana a Loki datasource (uid `loki`, provisioning file `loki.yaml`). No Application, no
+  Loki or collector of its own; without the key the render is exactly as before. Also released for 0.1.x as 0.1.5.
 - `components.tracing` (opt-in, external only): `enabled` + `external.queryUrl` (and `external.endpoint`, the OTLP
   receiver your services export to, for reference) give platform-monitoring's Grafana a Tempo datasource (uid `tempo`,
   a provisioning file of its own, so `additionalDataSources` stay). No Application and no in-cluster Tempo; per

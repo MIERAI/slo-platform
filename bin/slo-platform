@@ -58,7 +58,7 @@ LABEL_VALUE = r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$"
 # platform components (components.<name>): Helm-sourced ones take values, kustomize-sourced ones do not
 HELM_COMPONENTS = ("monitoring", "blackbox", "chaos-mesh", "experiments")
 KUSTOMIZE_COMPONENTS = ("pyrra", "cert-manager", "argo-rollouts", "cnpg", "kyverno", "policies", "object-storage")
-# components.tracing: an external Tempo (opt-in); only Grafana's datasource, no Application
+# components.tracing / components.logging: an external Tempo / Loki (opt-in); only Grafana's datasource, no Application
 HTTP_URL = r"^https?://[^\s/]+(/\S*)?$"
 TRACING_SCHEMA = {"type": "object", "additionalProperties": False, "properties": {
     "enabled": {"type": "boolean"},
@@ -117,7 +117,7 @@ SCHEMA = {
                    "properties": {"enabled": {"type": "boolean"}, "values": {"type": "object"}}} for c in HELM_COMPONENTS},
             **{c: {"type": "object", "additionalProperties": False,
                    "properties": {"enabled": {"type": "boolean"}}} for c in KUSTOMIZE_COMPONENTS},
-            "tracing": TRACING_SCHEMA}},
+            "tracing": TRACING_SCHEMA, "logging": TRACING_SCHEMA}},
         "grafana": {"type": "object", "additionalProperties": False,
                     "properties": {"adminSecret": {"type": "string", "pattern": NAME}}},
         "regression": {"type": "object", "additionalProperties": False, "properties": {
@@ -300,18 +300,20 @@ def check_platform(p, problems, product=None):
         names = [x.get("name") for x in extras or [] if isinstance(x, dict)]
         for n in sorted({n for n in names if names.count(n) > 1}):
             problems.append(f"platform.yaml: .clusters.{name}.extras: {n} twice (the Application is extras-<name>)")
-    # components.tracing (top-level, then each cluster's over it): enabled needs an external Tempo's query URL
+    # components.tracing / logging (top-level, then each cluster's over it): enabled needs the external query URL
     comps = p.get("components") if isinstance(p.get("components"), dict) else {}
     clusters = p.get("clusters") if isinstance(p.get("clusters"), dict) else {}
-    for name in clusters or [None]:
-        cc = (clusters.get(name) or {}) if name else {}
-        cc = (cc.get("components") or {}) if isinstance(cc, dict) else {}
-        t = deep_merge(comps.get("tracing") if isinstance(comps.get("tracing"), dict) else {},
-                       cc.get("tracing") if isinstance(cc, dict) and isinstance(cc.get("tracing"), dict) else {})
-        if t.get("enabled") is True and not (t.get("external") or {}).get("queryUrl"):
-            where = f" on cluster {name}" if name else ""
-            problems.append(f"platform.yaml: .components.tracing: enabled{where} needs external.queryUrl (an external "
-                            "Tempo's HTTP API, e.g. http://tempo.example:3200): this release installs no Tempo of its own")
+    for comp, product, example in (("tracing", "Tempo", "http://tempo.example:3200"),
+                                   ("logging", "Loki", "http://loki.example:3100")):
+        for name in clusters or [None]:
+            cc = (clusters.get(name) or {}) if name else {}
+            cc = (cc.get("components") or {}) if isinstance(cc, dict) else {}
+            t = deep_merge(comps.get(comp) if isinstance(comps.get(comp), dict) else {},
+                           cc.get(comp) if isinstance(cc, dict) and isinstance(cc.get(comp), dict) else {})
+            if t.get("enabled") is True and not (t.get("external") or {}).get("queryUrl"):
+                where = f" on cluster {name}" if name else ""
+                problems.append(f"platform.yaml: .components.{comp}: enabled{where} needs external.queryUrl (an external "
+                                f"{product}'s HTTP API, e.g. {example}): this release installs no {product} of its own")
     tz = p.get("timezone")
     if isinstance(tz, str) and not any(e.startswith(".timezone") for e in errs):
         try:

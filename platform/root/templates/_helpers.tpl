@@ -32,16 +32,18 @@ clusters.<cluster>.components.<name> deep-merged over it (clusters differ: a sma
 {{- dict "enabled" (ne (toString (dig "enabled" true $c)) "false") "values" (dig "values" dict $c) | toJson }}
 {{- end }}
 
-{{- /* root.tracing: components.tracing with clusters.<cluster>.components.tracing deep-merged over it, as JSON
-{enabled, external}: opt-in (enabled defaults to false); enabled needs external.queryUrl, an external Tempo (this
-release installs no Tempo of its own). Only platform-monitoring's Grafana uses it (a Tempo datasource). */}}
-{{- define "root.tracing" -}}
-{{- $top := index (.Values.components | default dict) "tracing" | default dict }}
-{{- $cl := index ((index (.Values.clusters | default dict) (.Values.cluster | default "") | default dict).components | default dict) "tracing" | default dict }}
+{{- /* root.external: an opt-in component that points Grafana at a service outside the cluster ((list . "<name>"
+"<product>" "<example URL>"): tracing → Tempo, logging → Loki): components.<name> with clusters.<cluster>.components.<name>
+deep-merged over it, as JSON {enabled, external}. enabled defaults to false and needs external.queryUrl (this release
+installs neither of its own). Only platform-monitoring's Grafana uses them (a datasource each). */}}
+{{- define "root.external" -}}
+{{- $root := index . 0 }}{{ $name := index . 1 }}{{ $product := index . 2 }}{{ $example := index . 3 }}
+{{- $top := index ($root.Values.components | default dict) $name | default dict }}
+{{- $cl := index ((index ($root.Values.clusters | default dict) ($root.Values.cluster | default "") | default dict).components | default dict) $name | default dict }}
 {{- $c := include "root.deepMerge" (dict "base" $top "over" $cl) | fromJson }}
 {{- $on := eq (toString (dig "enabled" false $c)) "true" }}
 {{- $ext := dig "external" dict $c }}
-{{- if and $on (not (dig "queryUrl" "" $ext)) }}{{ fail "components.tracing: enabled needs external.queryUrl (an external Tempo's HTTP API, e.g. http://tempo.example:3200): this release installs no Tempo of its own" }}{{ end }}
+{{- if and $on (not (dig "queryUrl" "" $ext)) }}{{ fail (printf "components.%s: enabled needs external.queryUrl (an external %s's HTTP API, e.g. %s): this release installs no %s of its own" $name $product $example $product) }}{{ end }}
 {{- dict "enabled" $on "external" $ext | toJson }}
 {{- end }}
 
