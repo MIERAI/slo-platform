@@ -152,10 +152,15 @@ def apps(root=".", instance=None, platform=None, cluster=None):
     for s in sets:
         g = _git_generator(s["spec"]["generators"])
         base = repos[g["repoURL"]]
-        for f in g["files"]:
-            for p in sorted(glob.glob(os.path.join(base, f["path"]))):
-                d = appdesc.load(os.path.relpath(os.path.dirname(p), base), base)
-                out += appdesc.applications(d, base, ctx["product"], _day(ctx))
+        # as Argo CD's git generator: the files of every entry, minus those of the entries with exclude: true
+        # (clusters.<name>.applications.exclude)
+        def found(f):
+            return set(glob.glob(os.path.join(base, f["path"])))
+        excluded = set().union(*[found(f) for f in g["files"] if f.get("exclude")])
+        files = set().union(*[found(f) for f in g["files"] if not f.get("exclude")]) - excluded
+        for p in sorted(files):
+            d = appdesc.load(os.path.relpath(os.path.dirname(p), base), base)
+            out += appdesc.applications(d, base, ctx["product"], _day(ctx))
     return out
 
 
