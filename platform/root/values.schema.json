@@ -997,6 +997,38 @@
                   }
                 },
                 "description": "Distributed tracing with an external Grafana Tempo: opt-in (enabled: false by default); needs external.queryUrl. No Application: only platform-monitoring's Grafana changes."
+              },
+              "logging": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "true: Grafana gets a Loki datasource for `external` (off by default)."
+                  },
+                  "external": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "queryUrl"
+                    ],
+                    "properties": {
+                      "queryUrl": {
+                        "type": "string",
+                        "pattern": "^https?://[^\\s/]+(/\\S*)?$",
+                        "description": "Loki's HTTP API as Grafana reaches it, e.g. http://loki.example:3100: the Loki datasource's URL."
+                      },
+                      "endpoint": {
+                        "type": "string",
+                        "pattern": "^https?://[^\\s/]+(/\\S*)?$",
+                        "description": "Loki's push API, e.g. http://loki.example:3100/loki/api/v1/push: what log collectors send to. Recorded here for people and tools; the platform installs no collector."
+                      }
+                    },
+                    "description": "A Loki outside the cluster (this release has no in-cluster Loki)."
+                  }
+                },
+                "description": "Logs in an external Grafana Loki: opt-in (enabled: false by default); needs external.queryUrl. No Application: only platform-monitoring's Grafana changes."
               }
             }
           }
@@ -1239,6 +1271,38 @@
             }
           },
           "description": "Distributed tracing with an external Grafana Tempo: opt-in (enabled: false by default); needs external.queryUrl. No Application: only platform-monitoring's Grafana changes."
+        },
+        "logging": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "true: Grafana gets a Loki datasource for `external` (off by default)."
+            },
+            "external": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "queryUrl"
+              ],
+              "properties": {
+                "queryUrl": {
+                  "type": "string",
+                  "pattern": "^https?://[^\\s/]+(/\\S*)?$",
+                  "description": "Loki's HTTP API as Grafana reaches it, e.g. http://loki.example:3100: the Loki datasource's URL."
+                },
+                "endpoint": {
+                  "type": "string",
+                  "pattern": "^https?://[^\\s/]+(/\\S*)?$",
+                  "description": "Loki's push API, e.g. http://loki.example:3100/loki/api/v1/push: what log collectors send to. Recorded here for people and tools; the platform installs no collector."
+                }
+              },
+              "description": "A Loki outside the cluster (this release has no in-cluster Loki)."
+            }
+          },
+          "description": "Logs in an external Grafana Loki: opt-in (enabled: false by default); needs external.queryUrl. No Application: only platform-monitoring's Grafana changes."
         }
       }
     },
