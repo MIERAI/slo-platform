@@ -160,8 +160,21 @@ def apps(root=".", instance=None, platform=None, cluster=None):
         files = set().union(*[found(f) for f in g["files"] if not f.get("exclude")]) - excluded
         for p in sorted(files):
             d = appdesc.load(os.path.relpath(os.path.dirname(p), base), base)
+            off = _excluded_environments(ctx, d["name"])
+            if off:
+                d = {**d, "environments": [e for e in d["environments"] if e["name"] not in off]}
             out += appdesc.applications(d, base, ctx["product"], _day(ctx))
     return out
+
+
+def _excluded_environments(ctx, app):
+    """The environments of app this cluster leaves out, as the ApplicationSet's environments list does
+    (root.environmentsIf): clusters.<name>.environments.exclude and clusters.<name>.applications.environments.<app>
+    .exclude."""
+    c = ((ctx["values"].get("clusters") or {}).get(ctx["cluster"]) or {}) if ctx["cluster"] is not None else {}
+    every = (c.get("environments") or {}).get("exclude") or []
+    mine = (((c.get("applications") or {}).get("environments") or {}).get(app) or {}).get("exclude") or []
+    return set(every) | set(mine)
 
 
 KUSTOMIZATIONS = ("kustomization.yaml", "kustomization.yml", "Kustomization")

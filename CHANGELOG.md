@@ -5,6 +5,12 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- Per-cluster environments: `clusters.<name>.environments.exclude` (environment names no application runs on that
+  cluster) and `clusters.<name>.applications.environments.<app>.exclude` (that application's). The ApplicationSet's
+  environments list skips them on that cluster only; without the keys it renders exactly as before. app.yaml stays
+  cluster-agnostic, promotions (repository files) are unaffected. `check` (environment names of the applications, no
+  duplicates, no application left without an environment) and `scripts/render.py` follow it. Also released for 0.1.x
+  as 0.1.3.
 - `clusters.<name>.applications.exclude`: applications a cluster does not run (a small lab making room). The
   ApplicationSet's git generator gets `exclude: true` file entries for that cluster only; without the key it renders
   exactly as before. `check` and `scripts/render.py` follow it. Also released for 0.1.x as 0.1.2.

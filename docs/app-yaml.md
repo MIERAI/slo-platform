@@ -13,7 +13,9 @@ mirrored by [scripts/render.py](../scripts/render.py)):
 | `traffic` × environment (unless `trafficScale: 0`) | `<name>-traffic-<env>` | chart [platform/traffic](../platform/traffic): synthetic users |
 
 Every cluster gets these Applications, unless platform.yaml leaves the application out of it
-([`clusters.<name>.applications.exclude`](configuration.md#applications-per-cluster)).
+([`clusters.<name>.applications.exclude`](configuration.md#applications-per-cluster)) or some of its environments
+([`clusters.<name>.environments`](configuration.md#environments-per-cluster)): app.yaml itself says nothing about
+clusters.
 
 Every Application of environment `<env>` deploys into the namespace **`<name>-<env>`**, which Argo CD creates with
 

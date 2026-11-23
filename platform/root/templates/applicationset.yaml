@@ -7,6 +7,8 @@ placeholders, not a Helm template.
     | replace "${INSTANCE_REPO}" .Values.instance.repo
     | replace "${INSTANCE_REVISION}" (.Values.instance.revision | toString)
     | replace "${APPS_FILES}" (include "root.appsFiles" .)
+    | replace "${ENVIRONMENTS_IF}" (include "root.environmentsIf" .)
+    | replace "${ENVIRONMENTS_END}" (ternary "{{- end }}" "" (ne (include "root.environmentsIf" .) ""))
     | replace "${NAMESPACE_LABELS}" (include "root.goDict" .Values.applications.namespaceLabels)
     | replace "${NAMESPACE_ANNOTATIONS}" (include "root.goDict" .Values.applications.namespaceAnnotations)
     | replace "${PRODUCT_REPO}" .Values.product.repo
