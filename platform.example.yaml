@@ -41,6 +41,9 @@ optional:
 #   tracing:                       # opt-in: a Grafana datasource for an external Tempo (docs/configuration.md#tracing)
 #     enabled: true
 #     external: { queryUrl: "http://tempo.example:3200", endpoint: "http://tempo.example:4318" }
+#   logging:                       # opt-in: a Grafana datasource for an external Loki (docs/configuration.md#logs)
+#     enabled: true
+#     external: { queryUrl: "http://loki.example:3100" }
 
 grafana:
   adminSecret: grafana-admin       # Secret in monitoring with admin-user, admin-password (created by bootstrap)

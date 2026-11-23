@@ -4,6 +4,15 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-23
+
+### Added
+- `components.logging` (opt-in, external only), the same shape as `components.tracing`: `enabled` +
+  `external.queryUrl` (and `external.endpoint`, the push API your collector uses, for reference) give
+  platform-monitoring's Grafana a Loki datasource (uid `loki`, provisioning file `loki.yaml`). No Application, no
+  Loki or collector of its own; without the key the render is exactly as before (tracing included). `check` refuses
+  `enabled` without `external.queryUrl`. A patch release on top of 0.1.4 (no 0.2.0 changes).
+
 ## [0.1.4] - 2026-11-23
 
 ### Added
