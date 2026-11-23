@@ -32,6 +32,19 @@ clusters.<cluster>.components.<name> deep-merged over it (clusters differ: a sma
 {{- dict "enabled" (ne (toString (dig "enabled" true $c)) "false") "values" (dig "values" dict $c) | toJson }}
 {{- end }}
 
+{{- /* root.tracing: components.tracing with clusters.<cluster>.components.tracing deep-merged over it, as JSON
+{enabled, external}: opt-in (enabled defaults to false); enabled needs external.queryUrl, an external Tempo (this
+release installs no Tempo of its own). Only platform-monitoring's Grafana uses it (a Tempo datasource). */}}
+{{- define "root.tracing" -}}
+{{- $top := index (.Values.components | default dict) "tracing" | default dict }}
+{{- $cl := index ((index (.Values.clusters | default dict) (.Values.cluster | default "") | default dict).components | default dict) "tracing" | default dict }}
+{{- $c := include "root.deepMerge" (dict "base" $top "over" $cl) | fromJson }}
+{{- $on := eq (toString (dig "enabled" false $c)) "true" }}
+{{- $ext := dig "external" dict $c }}
+{{- if and $on (not (dig "queryUrl" "" $ext)) }}{{ fail "components.tracing: enabled needs external.queryUrl (an external Tempo's HTTP API, e.g. http://tempo.example:3200): this release installs no Tempo of its own" }}{{ end }}
+{{- dict "enabled" $on "external" $ext | toJson }}
+{{- end }}
+
 {{- /* root.enabled: "true" unless components.<name>.enabled is false ((list . "<name>"); empty = false) */}}
 {{- define "root.enabled" -}}
 {{- if (include "root.component" . | fromJson).enabled }}true{{ end }}

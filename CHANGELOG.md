@@ -4,6 +4,16 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-23
+
+### Added
+- `components.tracing` (opt-in, external only): `enabled` + `external.queryUrl` (and `external.endpoint`, the OTLP
+  receiver your services export to, for reference) give platform-monitoring's Grafana a Tempo datasource (uid `tempo`,
+  a provisioning file of its own, so `additionalDataSources` stay). No Application and no in-cluster Tempo; per
+  cluster via `clusters.<name>.components.tracing`; off (or without the key) the render is exactly as before. `check`
+  refuses `enabled` without `external.queryUrl`. `bin/slo-platform`'s built-in schema now also knows
+  `clusters.<name>.components`. A patch release on top of 0.1.3 (no 0.2.0 changes).
+
 ## [0.1.3] - 2026-11-23
 
 ### Added
