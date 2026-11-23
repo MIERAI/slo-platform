@@ -264,7 +264,7 @@ class RootChart(unittest.TestCase):
                  "argo-rollouts": "platform-argo-rollouts", "cnpg": "platform-cnpg", "experiments": "platform-experiments",
                  "kyverno": "platform-kyverno", "policies": "platform-policies", "object-storage": "platform-object-storage"}
         with open(os.path.join(CHART, "values.schema.json")) as f:
-            self.assertEqual(set(json.load(f)["properties"]["components"]["properties"]), set(names) | {"tracing"})
+            self.assertEqual(set(json.load(f)["properties"]["components"]["properties"]), set(names) | {"tracing", "logging"})
         both = set(ok(BASE, "prod")) | set(ok(BASE, "lab"))
         for c, app in names.items():
             v = values(components={c: {"enabled": False}})
@@ -307,6 +307,32 @@ class RootChart(unittest.TestCase):
                         ({"enabled": True, "external": {"queryUrl": "tempo:3200"}}, "queryUrl"),
                         ({"values": {"x": 1}}, "values")):
             rc, _, err = helm(values(components={"tracing": t}), "prod")
+            self.assertNotEqual(rc, 0, t)
+            self.assertIn(want, err)
+
+    def test_logging(self):
+        # like tracing: a Loki datasource in Grafana, no Application; next to Tempo's when both are on
+        ext = {"queryUrl": "http://loki.example:3100"}
+        tr = {"enabled": True, "external": {"queryUrl": "http://tempo.example:3200"}}
+        for cl in ("prod", "lab"):
+            self.assertEqual(ok(values(components={"logging": {"external": ext}}), cl), ok(BASE, cl))
+        loki = {"apiVersion": 1, "datasources": [
+            {"name": "Loki", "uid": "loki", "type": "loki", "access": "proxy", "url": "http://loki.example:3100"}]}
+        on = ok(values(components={"logging": {"enabled": True, "external": ext}}), "prod")
+        self.assertEqual(set(on), set(ok(BASE, "prod")))
+        g, g0 = (helm_values(o["platform-monitoring"])["grafana"] for o in (on, ok(BASE, "prod")))
+        self.assertEqual(g.pop("datasources"), {"loki.yaml": loki})
+        self.assertEqual(g, g0)
+        both = helm_values(ok(values(components={"logging": {"enabled": True, "external": ext}, "tracing": tr}),
+                              "prod")["platform-monitoring"])["grafana"]["datasources"]
+        self.assertEqual((sorted(both), both["loki.yaml"]), (["loki.yaml", "tempo.yaml"], loki))
+        # tracing alone renders exactly as in 0.1.4
+        t = helm_values(ok(values(components={"tracing": tr}), "prod")["platform-monitoring"])["grafana"]["datasources"]
+        self.assertEqual(list(t), ["tempo.yaml"])
+        for t, want in (({"enabled": True}, "components.logging: enabled needs external.queryUrl (an external Loki's"),
+                        ({"enabled": True, "external": {"queryUrl": "loki:3100"}}, "queryUrl"),
+                        ({"values": {"x": 1}}, "values")):
+            rc, _, err = helm(values(components={"logging": t}), "prod")
             self.assertNotEqual(rc, 0, t)
             self.assertIn(want, err)
 

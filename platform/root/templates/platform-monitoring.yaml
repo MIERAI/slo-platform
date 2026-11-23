@@ -100,16 +100,25 @@ grafana:
   sidecar:
     dashboards: { enabled: true, label: grafana_dashboard, searchNamespace: ALL }
   resources: { requests: { cpu: 50m, memory: 192Mi }, limits: { memory: 512Mi } }
-  {{- $tracing := include "root.tracing" . | fromJson }}
-  {{- if $tracing.enabled }}
-  # components.tracing: the external Tempo as a datasource (uid tempo). A provisioning file of its own (a key of the
-  # datasources map), not an entry of additionalDataSources: your own additionalDataSources (a list: it replaces)
-  # leave it in place.
+  {{- $tracing := include "root.external" (list . "tracing" "Tempo" "http://tempo.example:3200") | fromJson }}
+  {{- $logging := include "root.external" (list . "logging" "Loki" "http://loki.example:3100") | fromJson }}
+  {{- if or $tracing.enabled $logging.enabled }}
+  # components.tracing / components.logging: the external Tempo / Loki as datasources (uid tempo / loki). Provisioning
+  # files of their own (keys of the datasources map), not entries of additionalDataSources: your own
+  # additionalDataSources (a list: it replaces) leave them in place.
   datasources:
+    {{- if $tracing.enabled }}
     tempo.yaml:
       apiVersion: 1
       datasources:
         - { name: Tempo, uid: tempo, type: tempo, access: proxy, url: {{ $tracing.external.queryUrl | quote }} }
+    {{- end }}
+    {{- if $logging.enabled }}
+    loki.yaml:
+      apiVersion: 1
+      datasources:
+        - { name: Loki, uid: loki, type: loki, access: proxy, url: {{ $logging.external.queryUrl | quote }} }
+    {{- end }}
   {{- end }}
   # Grafana needs more than the default 60s to start on a small node: the liveness probe killed it in a loop
   # (exit 137)
