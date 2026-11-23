@@ -82,6 +82,35 @@ without the key exactly [{ path: "<glob>" }], as before it existed */}}
 {{- end }}]
 {{- end }}
 
+{{- /* root.environmentsIf: the Argo CD template that opens an if around each environment of an application (the
+ApplicationSet's environments list; the application's name is $.name, the directory name), false for those this
+cluster leaves out: clusters.<name>.environments.exclude (every application) and
+clusters.<name>.applications.environments.<app>.exclude (that one); empty without them, as before they existed */}}
+{{- define "root.environmentsIf" -}}
+{{- $c := include "root.cluster" . | fromJson }}
+{{- $every := (($c.environments | default dict).exclude) | default list }}
+{{- $per := dict }}
+{{- range $app, $e := (($c.applications | default dict).environments) | default dict }}
+{{- $x := ($e | default dict).exclude | default list }}
+{{- if $x }}{{ $_ := set $per $app $x }}{{ end }}
+{{- end }}
+{{- $terms := list }}
+{{- if $every }}{{ $terms = append $terms (printf "(has .name %s)" (include "root.goList" $every)) }}{{ end }}
+{{- if $per }}
+{{- $d := list }}
+{{- range $app := keys $per | sortAlpha }}
+{{- $d = append $d (printf "%q %s" $app (include "root.goList" (index $per $app))) }}
+{{- end }}
+{{- $terms = append $terms (printf "(has .name (get (dict %s) $.name | default list))" (join " " $d)) }}
+{{- end }}
+{{- if $terms }}{{ printf "{{- if not (or %s) }}" (join " " $terms) }}{{ end }}
+{{- end }}
+
+{{- /* root.goList: a list of strings as a Go template expression for Argo CD's templates: (list "a" "b" …) */}}
+{{- define "root.goList" -}}
+(list{{ range . }} {{ printf "%q" (toString .) }}{{ end }})
+{{- end }}
+
 {{- /* root.experiments: the daily regression's experiment directories (globs), as a JSON list: regression.experiments,
 default <instance.apps>/<every app>/experiments */}}
 {{- define "root.experiments" -}}

@@ -90,6 +90,14 @@ SCHEMA = {
                                  "properties": {"name": {"type": "string", "pattern": NAME, "maxLength": 46},
                                                 "path": {"type": "string", "pattern": rf"^{SEG}(/{SEG})*$"}}}},
                              "applications": {"type": "object", "additionalProperties": False, "properties": {
+                                 "exclude": {"type": "array", "items": {"type": "string", "pattern": NAME}},
+                                 "environments": {"type": "object", "propertyNames": {"pattern": NAME},
+                                                  "additionalProperties": {
+                                                      "type": "object", "required": ["exclude"],
+                                                      "additionalProperties": False, "properties": {
+                                                          "exclude": {"type": "array",
+                                                                      "items": {"type": "string", "pattern": NAME}}}}}}},
+                             "environments": {"type": "object", "additionalProperties": False, "properties": {
                                  "exclude": {"type": "array", "items": {"type": "string", "pattern": NAME}}}}}}},
         "optional": {"type": "object", "additionalProperties": False,
                      "properties": {"policies": {"type": "boolean"}}},
@@ -628,6 +636,7 @@ def check(instance):
         data = load_yaml(f, problems)
         if len(problems) == n:
             apps[os.path.basename(d)] = check_app(data, d, problems, os.path.relpath(d, instance))
+    check_environments(p, apps, names, problems)
     seen = {}
     for f in experiment_files(instance, p):
         n = len(problems)
@@ -635,6 +644,54 @@ def check(instance):
         if len(problems) == n:
             check_experiment(data, f, apps, problems, seen)
     return problems
+
+
+def check_environments(p, apps, names, problems):
+    """clusters.<name>.environments.exclude and clusters.<name>.applications.environments.<app>.exclude: names of
+    environments the applications have (apps: {app: ({env names}, …)} of the readable app.yaml files; names: every
+    application directory), no duplicates, and no application left without an environment on a cluster that runs it
+    (applications.exclude says that)."""
+    clusters = p.get("clusters") if isinstance(p, dict) else None
+    for name, c in clusters.items() if isinstance(clusters, dict) else []:
+        if not isinstance(c, dict):
+            continue
+        a = c.get("applications") if isinstance(c.get("applications"), dict) else {}
+        off = a.get("exclude") if isinstance(a.get("exclude"), list) else []
+        where = f"platform.yaml: .clusters.{name}"
+        dup = lambda key, xs: [problems.append(f"{where}.{key}: {n} twice")   # noqa: E731
+                               for n in sorted({n for n in xs if isinstance(n, str) and xs.count(n) > 1})]
+        x = (c.get("environments") or {}).get("exclude") if isinstance(c.get("environments"), dict) else None
+        every = [n for n in x if isinstance(n, str)] if isinstance(x, list) else []
+        known = set().union(*[envs for envs, _ in apps.values()])
+        for n in every:
+            if n not in known:
+                problems.append(f"{where}.environments.exclude: {n} is not an environment of any application "
+                                f"({', '.join(sorted(known)) or 'none'})")
+        dup("environments.exclude", every)
+        per = a.get("environments") if isinstance(a.get("environments"), dict) else {}
+        for app, e in per.items():
+            x = e.get("exclude") if isinstance(e, dict) else None
+            mine = [n for n in x if isinstance(n, str)] if isinstance(x, list) else []
+            key = f"applications.environments.{app}.exclude"
+            if app not in names:
+                problems.append(f"{where}.applications.environments: {app} is not an application here "
+                                f"({', '.join(sorted(names)) or 'none'})")
+                continue
+            if app not in apps:
+                continue   # its app.yaml has problems of its own
+            envs = apps[app][0]
+            for n in mine:
+                if n not in envs:
+                    problems.append(f"{where}.{key}: {n} is not an environment of {app} ({', '.join(sorted(envs))})")
+            dup(key, mine)
+            if app in off:
+                problems.append(f"{where}.{key}: {app} is in applications.exclude (the cluster does not run it)")
+        for app, (envs, _) in sorted(apps.items()):
+            mine = (per.get(app) or {}).get("exclude") if isinstance(per.get(app), dict) else None
+            left = set(envs) - set(every) - set(mine if isinstance(mine, list) else [])
+            if envs and app not in off and not left:
+                problems.append(f"{where}: no environment of {app} is left ({', '.join(sorted(envs))} excluded); "
+                                f"to leave the application out, use applications.exclude: [{app}]")
 
 
 def app_files(instance, p):

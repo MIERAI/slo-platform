@@ -415,6 +415,46 @@ class ExistingRepository(Tmp):
             self.edit(self.p, lambda p: p["clusters"]["lab"].update(applications=bad))
             self.assertProblem(".clusters.lab.applications")
 
+    def test_environments_exclude(self):
+        lab = lambda **x: self.edit(self.p, lambda p: p["clusters"]["lab"].update(x))   # noqa: E731
+        lab(environments={"exclude": ["staging"]}, applications={"environments": {"storefront": {"exclude": ["prod"]},
+                                                                                  "sample-app": {"exclude": ["dev"]}}})
+        for real in (False, True):
+            self.assertEqual(self.problems(real), [])
+        lab(environments={"exclude": ["qa"]})
+        self.assertProblem(".clusters.lab.environments.exclude: qa is not an environment of any application "
+                           "(dev, prod, staging)")
+        lab(environments={"exclude": ["dev", "dev"]})
+        self.assertProblem(".clusters.lab.environments.exclude: dev twice")
+        lab(environments={"exclude": ["staging"]},
+            applications={"environments": {"sample-app": {"exclude": ["staging"]}}})
+        self.assertProblem(".clusters.lab.applications.environments.sample-app.exclude: staging is not an environment "
+                           "of sample-app (dev, prod)")
+        lab(applications={"environments": {"shop": {"exclude": ["dev"]}}})
+        self.assertProblem(".clusters.lab.applications.environments: shop is not an application here "
+                           "(sample-app, storefront)")
+        lab(applications={"environments": {"storefront": {"exclude": ["dev", "dev"]}}})
+        self.assertProblem(".clusters.lab.applications.environments.storefront.exclude: dev twice")
+        lab(applications={"exclude": ["storefront"], "environments": {"storefront": {"exclude": ["dev"]}}})
+        self.assertProblem(".clusters.lab.applications.environments.storefront.exclude: storefront is in "
+                           "applications.exclude")
+        # every environment of an application gone: that is applications.exclude
+        lab(environments={"exclude": ["prod"]}, applications={"environments": {"sample-app": {"exclude": ["dev"]}}})
+        self.assertProblem(".clusters.lab: no environment of sample-app is left (dev, prod excluded); to leave the "
+                           "application out, use applications.exclude: [sample-app]")
+        lab(environments={"exclude": ["prod"]}, applications={"exclude": ["sample-app"],
+                                                              "environments": {"storefront": {"exclude": ["dev"]}}})
+        for real in (False, True):
+            self.assertEqual(self.problems(real), [])
+        for bad in ({"environments": {"exclude": ["Big"]}}, {"environments": {"exclude": "dev"}},
+                    {"environments": {"only": ["dev"]}}, {"applications": {"environments": {"storefront": ["dev"]}}},
+                    {"applications": {"environments": {"storefront": {"only": ["dev"]}}}},
+                    {"applications": {"environments": {"Shop": {"exclude": ["dev"]}}}}):
+            self.edit(self.p, lambda p: (p["clusters"]["lab"].pop("environments", None),
+                                         p["clusters"]["lab"].pop("applications", None),
+                                         p["clusters"]["lab"].update(bad)))
+            self.assertProblem(".clusters.lab.")
+
     def test_components(self):
         self.edit(self.p, lambda p: p.update(components={
             "monitoring": {"values": {"grafana": {"enabled": False}}}, "pyrra": {"enabled": False},

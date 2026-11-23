@@ -12,7 +12,9 @@
 # annotated namespaces), over app.yaml's namespace.labels / namespace.annotations, over platform.yaml's
 # applications.namespaceLabels / namespaceAnnotations (filled in below as Go dict expressions). ignoreDifferences
 # (app.yaml) is passed through, with RespectIgnoreDifferences. A cluster leaves out the applications its
-# clusters.<name>.applications.exclude names (git generator files entries with exclude: true, none without it).
+# clusters.<name>.applications.exclude names (git generator files entries with exclude: true, none without it), and
+# the environments its clusters.<name>.environments.exclude / applications.environments.<app>.exclude name
+# (root.environmentsIf: an if around each environment in the environments list below, nothing without them).
 # Rendered by the root chart (templates/applicationset.yaml), which fills in the ${…} placeholders from platform.yaml.
 # scripts/render.py (appdesc.applications) renders the same way for validate.sh and the scripts: keep both in step.
 apiVersion: argoproj.io/v1alpha1
@@ -48,10 +50,10 @@ spec:
           - list:
               elementsYaml: |
                 {{- $traffic := hasKey .component "traffic" }}
-                {{- range .environments }}
+                {{- range .environments }}${ENVIRONMENTS_IF}
                 {{- if not (and $traffic (hasKey . "trafficScale") (eq (toString .trafficScale) "0")) }}
                 - env: {{ toJson . }}
-                {{- end }}
+                {{- end }}${ENVIRONMENTS_END}
                 {{- end }}
   syncPolicy:
     preserveResourcesOnDeletion: true   # removing an app.yaml removes its Applications, not (yet) its workloads
