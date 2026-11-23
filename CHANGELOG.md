@@ -4,6 +4,16 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-23
+
+### Added
+- Per-cluster environments: `clusters.<name>.environments.exclude` (environment names no application runs on that
+  cluster) and `clusters.<name>.applications.environments.<app>.exclude` (that application's). The ApplicationSet's
+  environments list skips them on that cluster only; without the keys it renders exactly as before. app.yaml stays
+  cluster-agnostic, promotions (repository files) are unaffected. `check` (environment names of the applications, no
+  duplicates, no application left without an environment) and `scripts/render.py` follow it. A patch release on top
+  of 0.1.2 (no 0.2.0 changes).
+
 ## [0.1.2] - 2026-11-23
 
 ### Added

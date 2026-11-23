@@ -61,7 +61,11 @@ Exits non-zero with one line per problem:
   Helm validates the root chart's values with (the chart's `values.yaml` defaults merged in, as Helm does) — and the
   time zone against the IANA database.
 - `clusters.<name>.extras`: names unique per cluster, every `path` a directory of the instance;
-  `clusters.<name>.applications.exclude`: applications of this instance, each once; `components.<name>`:
+  `clusters.<name>.applications.exclude`: applications of this instance, each once;
+  `clusters.<name>.environments.exclude` / `applications.environments.<app>.exclude`: environments of the
+  applications (of that application), each once, none of an application excluded there, and every application the
+  cluster runs keeps at least one environment ([Environments per cluster](#environments-per-cluster));
+  `components.<name>`:
   a known component, and `values` only for the Helm-sourced ones ([Components](#components)); namespace labels and
   annotations (`applications.*`, app.yaml `namespace`): valid keys, string values (labels: valid label values), none of
   the platform's own (`slo-platform/*`, `chaos-mesh.org/inject`).
@@ -106,6 +110,8 @@ once per cluster with `cluster: <name>` added. An annotated example: [platform.e
 | `clusters.<name>.objectStorage` | `none` | `in-cluster`: an S3-compatible store (SeaweedFS) for database backups |
 | `clusters.<name>.extras` | `[]` | Your own components on that cluster: `[{ name, path }]`, [below](#extras) |
 | `clusters.<name>.applications.exclude` | `[]` | Applications (directory names under `instance.apps`) this cluster does not run, [below](#applications-per-cluster) |
+| `clusters.<name>.environments.exclude` | `[]` | Environments (app.yaml `environments[].name`) this cluster does not run, of any application, [below](#environments-per-cluster) |
+| `clusters.<name>.applications.environments` | `{}` | Per application: `{ <app>: { exclude: [<env>] } }`, that application's environments this cluster does not run, [below](#environments-per-cluster) |
 | `clusters.<name>.components` | `{}` | Same keys as `components`, for that cluster only, deep-merged over the top-level ones — e.g. a small lab: `{ monitoring: { values: { grafana: { enabled: false } } } }` |
 | `optional.policies` | `false` | Kyverno and the workload baseline (admission policies in application namespaces) |
 | `applications.namespaceLabels` | `{}` | Labels of every application namespace `<app>-<env>` (app.yaml `namespace.labels` is merged over them) |
@@ -175,6 +181,40 @@ Excluding an application that already runs there removes its Applications, not i
 preserves resources on deletion): delete the namespaces `<app>-<env>` yourself afterwards. Fault experiments that
 target an excluded application's namespaces fail on that cluster: move or skip them. `check` requires each name to
 be an application of the instance.
+
+### Environments per cluster
+
+Every cluster runs every environment of each application it runs, unless platform.yaml leaves some out — for every
+application (`clusters.<name>.environments.exclude`) or for one (`clusters.<name>.applications.environments.<app>
+.exclude`, `<app>` its directory name). The two add up. The ApplicationSet then makes no Applications
+(`<component>-<env>`, `<name>-slo-<env>`, `<name>-traffic-<env>`) for those environments on that cluster: each
+environment of its environments list is wrapped in one more `if`; without the keys (or with empty lists) the
+ApplicationSet is exactly as before. Use it when a cluster needs only part of an application: a small lab that keeps
+dev for its checks but not the staging and prod copies prod already runs, or a cluster that runs prod only.
+
+```yaml
+clusters:
+  lab:
+    role: lab
+    environments: { exclude: [staging] }        # no application's staging on the lab
+    applications:
+      environments:
+        catalog: { exclude: [prod] }             # catalog: dev only (its staging is gone already)
+```
+
+This is platform.yaml's, not app.yaml's: an application describes its environments once, clusters choose among them
+(as with [`applications.exclude`](#applications-per-cluster)). Promotions are not affected: they move image tags
+between the environments' files in the instance repository (app.yaml `promotion.from`, soak time from the git
+history), whichever clusters deploy them — an environment a cluster leaves out still exists for the others, and for
+promotions. A cluster that excludes the `promotion.from` environment of one it keeps simply receives versions that
+ran elsewhere.
+
+Excluding an environment that already runs there removes its Applications, not its workloads (the ApplicationSet
+preserves resources on deletion): delete the namespace `<app>-<env>` yourself afterwards. Fault experiments that
+target it fail on that cluster: move or skip them. `check` requires every name to be an environment of some
+application (`environments.exclude`) or of that application (`applications.environments`), each once; an application
+excluded there takes no environment settings, and an application the cluster runs must keep at least one environment
+(to leave all out, use `applications.exclude`).
 
 ## Components
 

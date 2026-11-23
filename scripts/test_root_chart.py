@@ -399,6 +399,42 @@ class RootChart(unittest.TestCase):
             b["clusters"]["lab"]["applications"] = bad
             self.assertNotEqual(helm(b, "lab")[0], 0, bad)
 
+    def test_environments_exclude(self):
+        # clusters.<name>.environments.exclude / applications.environments.<app>.exclude: an if around each
+        # environment of the ApplicationSet's environments list, on that cluster only
+        def envs(o):   # the environments list's template
+            return o["applications"]["spec"]["generators"][0]["matrix"]["generators"][1]["list"]["elementsYaml"]
+        v = values()
+        v["clusters"] = copy.deepcopy(v["clusters"])
+        before = {c: ok(v, c)["applications"] for c in ("prod", "lab")}
+        v["clusters"]["lab"]["environments"] = {"exclude": ["staging"]}
+        v["clusters"]["lab"]["applications"] = {"environments": {"storefront": {"exclude": ["prod", "dev"]},
+                                                                 "sample-app": {"exclude": ["dev"]}}}
+        self.assertEqual(ok(v, "prod")["applications"], before["prod"])
+        lab = envs(ok(v, "lab"))
+        self.assertIn('{{- range .environments }}{{- if not (or (has .name (list "staging")) (has .name (get (dict '
+                      '"sample-app" (list "dev") "storefront" (list "prod" "dev")) $.name | default list))) }}\n', lab)
+        self.assertIn("{{- end }}{{- end }}\n", lab)
+        self.assertEqual(lab.count("{{- if"), envs({"applications": before["lab"]}).count("{{- if") + 1)
+        v["clusters"]["lab"]["applications"] = {"environments": {"storefront": {"exclude": ["prod"]}}}
+        del v["clusters"]["lab"]["environments"]
+        self.assertIn('{{- if not (or (has .name (get (dict "storefront" (list "prod")) $.name | default list))) }}',
+                      envs(ok(v, "lab")))
+        # without the keys (or with empty lists) the ApplicationSet is exactly what it was
+        v["clusters"]["lab"]["environments"] = {"exclude": []}
+        v["clusters"]["lab"]["applications"] = {"environments": {"storefront": {"exclude": []}}}
+        self.assertEqual(ok(v, "lab")["applications"], before["lab"])
+        for bad in ({"environments": {"exclude": ["Big"]}}, {"environments": {"exclude": "dev"}},
+                    {"environments": {"only": ["dev"]}}, {"environments": {"exclude": ["dev", "dev"]}},
+                    {"applications": {"environments": {"storefront": ["dev"]}}},
+                    {"applications": {"environments": {"storefront": {"only": ["dev"]}}}},
+                    {"applications": {"environments": {"Storefront": {"exclude": ["dev"]}}}}):
+            b = copy.deepcopy(v)
+            b["clusters"]["lab"].pop("environments")
+            b["clusters"]["lab"].pop("applications")
+            b["clusters"]["lab"].update(bad)
+            self.assertNotEqual(helm(b, "lab")[0], 0, bad)
+
     def test_timezone_offsets(self):
         for tz, off in (("Etc/UTC", "0"), ("Asia/Tokyo", "9"), ("America/New_York", "-5"), ("Europe/Berlin", "1"),
                         ("Etc/GMT+3", "-3"), ("Asia/Kathmandu", "5.75")):
@@ -511,6 +547,32 @@ class RenderInstance(unittest.TestCase):
         self.assertFalse([n for n in lab if n.startswith("storefront")], lab)
         self.assertIn("sample-app-prod", lab)
         self.assertTrue({"storefront-prod", "storefront-worker-dev", "storefront-slo-prod"} <= laptop)
+        self.assertEqual(laptop, {a["name"] for a in render.apps(ROOT, platform=platform, cluster="laptop")})
+
+    def test_environments_exclude_instance(self):
+        """clusters.lab.environments.exclude / applications.environments.<app>.exclude: render.py leaves those
+        environments' Applications out of that cluster only, as the ApplicationSet's environments list does."""
+        if not os.path.isdir(os.path.join(ROOT, "examples")):
+            self.skipTest("no examples")
+        platform = os.path.join(CHART, "ci", "existing-repo.yaml")
+        inst = render.example_instance(ROOT, platform)
+        with open(platform) as f:
+            v = yaml.safe_load(f)
+        v["clusters"]["lab"]["environments"] = {"exclude": ["staging"]}
+        v["clusters"]["lab"]["applications"] = {"environments": {"storefront": {"exclude": ["prod"]}}}
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        pf = os.path.join(d, "platform.yaml")
+        with open(pf, "w") as f:
+            yaml.safe_dump(v, f)
+        lab = {a["name"] for a in render.apps(ROOT, instance=inst, platform=pf, cluster="lab")}
+        laptop = {a["name"] for a in render.apps(ROOT, instance=inst, platform=pf, cluster="laptop")}
+        everything = {a["name"] for a in render.apps(ROOT, platform=platform, cluster="lab")}
+        gone = {n for n in everything if n.endswith(("-staging", "-prod")) and n.startswith("storefront")}
+        self.assertTrue({"storefront-prod", "storefront-worker-staging", "storefront-slo-prod",
+                         "storefront-traffic-staging"} <= gone, gone)
+        self.assertEqual(lab, everything - gone)
+        self.assertTrue({"storefront-dev", "sample-app-prod", "sample-app-dev"} <= lab)
         self.assertEqual(laptop, {a["name"] for a in render.apps(ROOT, platform=platform, cluster="laptop")})
 
 
