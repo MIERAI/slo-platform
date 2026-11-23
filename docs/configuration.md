@@ -123,6 +123,9 @@ once per cluster with `cluster: <name>` added. An annotated example: [platform.e
 | `applications.namespaceAnnotations` | `{}` | Annotations of every application namespace (app.yaml `namespace.annotations` is merged over them) |
 | `components.<component>.enabled` | `true` | `false`: the platform component is not installed ([Components](#components)) |
 | `components.<component>.values` | — | Helm-sourced components only: deep-merged into its Helm values |
+| `components.tracing.enabled` | `false` | Opt-in: Grafana gets a Tempo datasource for `components.tracing.external` ([Tracing](#tracing)) |
+| `components.tracing.external.queryUrl` | — | An external Tempo's HTTP API as Grafana reaches it (`http://tempo.example:3200`); required when enabled |
+| `components.tracing.external.endpoint` | — | Its OTLP/HTTP receiver (`http://tempo.example:4318`): recorded for people and tools, not passed into applications |
 | `grafana.adminSecret` | `grafana-admin` | Secret in `monitoring` with keys `admin-user`, `admin-password`; bootstrap creates it |
 | `regression.schedule` | `0 9 * * *` | Cron schedule of the daily experiment regression on lab clusters, in `timezone` |
 | `regression.experiments` | `<instance.apps>/*/experiments` | Experiment directories (a glob or a list of globs, relative to the instance root): the daily regression runs their `*.yaml`, `check` checks them |
@@ -237,6 +240,7 @@ The platform components the root chart installs, each an Argo CD Application `pl
 | `cnpg` | kustomize | every cluster |
 | `kyverno`, `policies` | kustomize | with `optional.policies: true` |
 | `object-storage` | kustomize | clusters with `objectStorage: in-cluster` |
+| `tracing` | none: a Grafana datasource for an external Tempo | only with `enabled: true` (opt-in): [Tracing](#tracing) |
 
 - `enabled: false` drops the component (its Application; Argo CD prunes what it installed). `enabled: true` is the
   default and does not override the condition in the last column. What depends on a dropped component is yours to
@@ -266,6 +270,36 @@ components:
 
 Merging over the monitoring stack's Alertmanager `config` replaces parts of the platform's routing ([notify](#notify)
 builds it): prefer `notify`.
+
+### Tracing
+
+`tracing` is opt-in (`enabled` defaults to `false`) and, in this release, **external only**: you run Grafana Tempo
+somewhere outside the cluster — a machine that observes production without being in its request path — and the
+platform gives the cluster's Grafana (platform-monitoring) a Tempo datasource (name `Tempo`, uid `tempo`) for it. No
+Application, no Tempo in the cluster; the rest of the render is unchanged.
+
+```yaml
+components:
+  tracing:
+    external:
+      queryUrl: http://tempo.example:3200   # Tempo's HTTP API: the datasource's URL (required when enabled)
+      endpoint: http://tempo.example:4318   # its OTLP/HTTP receiver: what your services export to
+clusters:
+  prod:
+    role: prod
+    components: { tracing: { enabled: true } }   # on for this cluster only (or components.tracing.enabled for all)
+```
+
+- The datasource is a provisioning file of its own (`grafana.datasources."tempo.yaml"` of platform-monitoring), so
+  your own `grafana.additionalDataSources` (a list, which replaces on merge) do not drop it, and it does not drop them.
+  Turning it on restarts Grafana once (the chart's checksum of its datasources).
+- **The applications decide whether they send traces**, per environment: the platform passes nothing into them. With
+  an OpenTelemetry SDK that is `OTEL_EXPORTER_OTLP_ENDPOINT=<external.endpoint>` in that environment's manifests,
+  typically dev first and the other environments through your normal promotion.
+- Tempo unreachable: the SDKs' batch span processors export in the background and drop spans when their queue is full
+  (2048 spans by default) — requests are not slowed or failed; you see fewer traces.
+- `check` refuses `enabled: true` without `external.queryUrl` (top level or on a cluster), and URLs that are not
+  `http(s)://`.
 
 ## An existing repository
 

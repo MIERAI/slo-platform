@@ -5,6 +5,12 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- `components.tracing` (opt-in, external only): `enabled` + `external.queryUrl` (and `external.endpoint`, the OTLP
+  receiver your services export to, for reference) give platform-monitoring's Grafana a Tempo datasource (uid `tempo`,
+  a provisioning file of its own, so `additionalDataSources` stay). No Application and no in-cluster Tempo; per
+  cluster via `clusters.<name>.components.tracing`; off (or without the key) the render is exactly as before. `check`
+  refuses `enabled` without `external.queryUrl`. `bin/slo-platform`'s built-in schema now also knows
+  `clusters.<name>.components`. Also released for 0.1.x as 0.1.4.
 - Per-cluster environments: `clusters.<name>.environments.exclude` (environment names no application runs on that
   cluster) and `clusters.<name>.applications.environments.<app>.exclude` (that application's). The ApplicationSet's
   environments list skips them on that cluster only; without the keys it renders exactly as before. app.yaml stays

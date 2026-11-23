@@ -965,6 +965,38 @@
                   }
                 },
                 "description": "SeaweedFS (only on clusters with objectStorage: in-cluster): kustomize-sourced, so no `values`."
+              },
+              "tracing": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "true: Grafana gets a Tempo datasource for `external` (off by default)."
+                  },
+                  "external": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "queryUrl"
+                    ],
+                    "properties": {
+                      "queryUrl": {
+                        "type": "string",
+                        "pattern": "^https?://[^\\s/]+(/\\S*)?$",
+                        "description": "Tempo's HTTP API (query, TraceQL) as Grafana reaches it, e.g. http://tempo.example:3200: the Tempo datasource's URL."
+                      },
+                      "endpoint": {
+                        "type": "string",
+                        "pattern": "^https?://[^\\s/]+(/\\S*)?$",
+                        "description": "Tempo's OTLP/HTTP receiver, e.g. http://tempo.example:4318: what applications set as OTEL_EXPORTER_OTLP_ENDPOINT. Recorded here for people and tools; the platform does not pass it into applications."
+                      }
+                    },
+                    "description": "A Tempo outside the cluster (this release has no in-cluster Tempo)."
+                  }
+                },
+                "description": "Distributed tracing with an external Grafana Tempo: opt-in (enabled: false by default); needs external.queryUrl. No Application: only platform-monitoring's Grafana changes."
               }
             }
           }
@@ -1175,6 +1207,38 @@
             }
           },
           "description": "SeaweedFS (only on clusters with objectStorage: in-cluster): kustomize-sourced, so no `values`."
+        },
+        "tracing": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "true: Grafana gets a Tempo datasource for `external` (off by default)."
+            },
+            "external": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "queryUrl"
+              ],
+              "properties": {
+                "queryUrl": {
+                  "type": "string",
+                  "pattern": "^https?://[^\\s/]+(/\\S*)?$",
+                  "description": "Tempo's HTTP API (query, TraceQL) as Grafana reaches it, e.g. http://tempo.example:3200: the Tempo datasource's URL."
+                },
+                "endpoint": {
+                  "type": "string",
+                  "pattern": "^https?://[^\\s/]+(/\\S*)?$",
+                  "description": "Tempo's OTLP/HTTP receiver, e.g. http://tempo.example:4318: what applications set as OTEL_EXPORTER_OTLP_ENDPOINT. Recorded here for people and tools; the platform does not pass it into applications."
+                }
+              },
+              "description": "A Tempo outside the cluster (this release has no in-cluster Tempo)."
+            }
+          },
+          "description": "Distributed tracing with an external Grafana Tempo: opt-in (enabled: false by default); needs external.queryUrl. No Application: only platform-monitoring's Grafana changes."
         }
       }
     },

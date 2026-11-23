@@ -264,7 +264,7 @@ class RootChart(unittest.TestCase):
                  "argo-rollouts": "platform-argo-rollouts", "cnpg": "platform-cnpg", "experiments": "platform-experiments",
                  "kyverno": "platform-kyverno", "policies": "platform-policies", "object-storage": "platform-object-storage"}
         with open(os.path.join(CHART, "values.schema.json")) as f:
-            self.assertEqual(set(json.load(f)["properties"]["components"]["properties"]), set(names))
+            self.assertEqual(set(json.load(f)["properties"]["components"]["properties"]), set(names) | {"tracing"})
         both = set(ok(BASE, "prod")) | set(ok(BASE, "lab"))
         for c, app in names.items():
             v = values(components={c: {"enabled": False}})
@@ -274,6 +274,41 @@ class RootChart(unittest.TestCase):
             self.assertEqual(ok(values(components={c: {"enabled": True}}), "prod"), ok(BASE, "prod"), c)
         off = values(optional={"policies": False}, components={"kyverno": {"enabled": True}, "policies": {"enabled": True}})
         self.assertNotIn("platform-kyverno", ok(off, "prod"))
+
+    def test_tracing(self):
+        # opt-in, external only: a Tempo datasource in Grafana, no Application; off renders exactly as without the key
+        ext = {"queryUrl": "http://tempo.example:3200", "endpoint": "http://tempo.example:4318"}
+        for cl in ("prod", "lab"):
+            self.assertEqual(ok(values(components={"tracing": {"external": ext}}), cl), ok(BASE, cl))
+            self.assertEqual(ok(values(components={"tracing": {"enabled": False, "external": ext}}), cl), ok(BASE, cl))
+        on = ok(values(components={"tracing": {"enabled": True, "external": ext}}), "prod")
+        self.assertEqual(set(on), set(ok(BASE, "prod")))                        # no Application of its own
+        g, g0 = (helm_values(o["platform-monitoring"])["grafana"] for o in (on, ok(BASE, "prod")))
+        self.assertEqual(g.pop("datasources"), {"tempo.yaml": {"apiVersion": 1, "datasources": [
+            {"name": "Tempo", "uid": "tempo", "type": "tempo", "access": "proxy", "url": "http://tempo.example:3200"}]}})
+        self.assertEqual(g, g0)
+        for name in set(on) - {"platform-monitoring"}:
+            self.assertEqual(on[name], ok(BASE, "prod")[name], name)
+        # with the user's additionalDataSources (a list that replaces): both are there
+        mine = [{"name": "x", "type": "prometheus", "url": "http://x"}]
+        v = values(components={"tracing": {"enabled": True, "external": ext},
+                               "monitoring": {"values": {"grafana": {"additionalDataSources": mine}}}})
+        g = helm_values(ok(v, "prod")["platform-monitoring"])["grafana"]
+        self.assertEqual((g["additionalDataSources"], list(g["datasources"])), (mine, ["tempo.yaml"]))
+        # per cluster: on for prod only, the URL at the top level
+        v = values(components={"tracing": {"external": ext}})
+        v["clusters"] = copy.deepcopy(v["clusters"])
+        v["clusters"]["prod"]["components"] = {"tracing": {"enabled": True}}
+        self.assertIn("datasources", helm_values(ok(v, "prod")["platform-monitoring"])["grafana"])
+        self.assertEqual(ok(v, "lab"), ok(BASE, "lab"))
+        # refusals: enabled without a URL; not a URL; values (no in-cluster Tempo in this release)
+        for t, want in (({"enabled": True}, "enabled needs external.queryUrl"),
+                        ({"enabled": True, "external": {"endpoint": "http://x:4318"}}, "queryUrl"),
+                        ({"enabled": True, "external": {"queryUrl": "tempo:3200"}}, "queryUrl"),
+                        ({"values": {"x": 1}}, "values")):
+            rc, _, err = helm(values(components={"tracing": t}), "prod")
+            self.assertNotEqual(rc, 0, t)
+            self.assertIn(want, err)
 
     def test_components_per_cluster(self):
         # a small lab drops Grafana and keeps prod's; cluster-level values merge over the top-level ones
