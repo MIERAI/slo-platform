@@ -58,6 +58,12 @@ LABEL_VALUE = r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$"
 # platform components (components.<name>): Helm-sourced ones take values, kustomize-sourced ones do not
 HELM_COMPONENTS = ("monitoring", "blackbox", "chaos-mesh", "experiments")
 KUSTOMIZE_COMPONENTS = ("pyrra", "cert-manager", "argo-rollouts", "cnpg", "kyverno", "policies", "object-storage")
+# components.tracing: an external Tempo (opt-in); only Grafana's datasource, no Application
+HTTP_URL = r"^https?://[^\s/]+(/\S*)?$"
+TRACING_SCHEMA = {"type": "object", "additionalProperties": False, "properties": {
+    "enabled": {"type": "boolean"},
+    "external": {"type": "object", "required": ["queryUrl"], "additionalProperties": False, "properties": {
+        "queryUrl": {"type": "string", "pattern": HTTP_URL}, "endpoint": {"type": "string", "pattern": HTTP_URL}}}}}
 OWN_LABEL_PREFIX = "slo-platform/"                    # namespace metadata the platform sets (always wins)
 OWN_ANNOTATIONS = ("chaos-mesh.org/inject",)
 
@@ -110,7 +116,8 @@ SCHEMA = {
             **{c: {"type": "object", "additionalProperties": False,
                    "properties": {"enabled": {"type": "boolean"}, "values": {"type": "object"}}} for c in HELM_COMPONENTS},
             **{c: {"type": "object", "additionalProperties": False,
-                   "properties": {"enabled": {"type": "boolean"}}} for c in KUSTOMIZE_COMPONENTS}}},
+                   "properties": {"enabled": {"type": "boolean"}}} for c in KUSTOMIZE_COMPONENTS},
+            "tracing": TRACING_SCHEMA}},
         "grafana": {"type": "object", "additionalProperties": False,
                     "properties": {"adminSecret": {"type": "string", "pattern": NAME}}},
         "regression": {"type": "object", "additionalProperties": False, "properties": {
@@ -128,6 +135,8 @@ SCHEMA = {
         "cluster": {"type": "string"},     # the root Application's Helm parameter; not written in platform.yaml
     },
 }
+# clusters.<name>.components: the same keys as components, deep-merged over them for that cluster
+SCHEMA["properties"]["clusters"]["additionalProperties"]["properties"]["components"] = SCHEMA["properties"]["components"]
 
 
 # ---------------------------------------------------------------- a JSON schema subset (no jsonschema dependency)
@@ -291,6 +300,18 @@ def check_platform(p, problems, product=None):
         names = [x.get("name") for x in extras or [] if isinstance(x, dict)]
         for n in sorted({n for n in names if names.count(n) > 1}):
             problems.append(f"platform.yaml: .clusters.{name}.extras: {n} twice (the Application is extras-<name>)")
+    # components.tracing (top-level, then each cluster's over it): enabled needs an external Tempo's query URL
+    comps = p.get("components") if isinstance(p.get("components"), dict) else {}
+    clusters = p.get("clusters") if isinstance(p.get("clusters"), dict) else {}
+    for name in clusters or [None]:
+        cc = (clusters.get(name) or {}) if name else {}
+        cc = (cc.get("components") or {}) if isinstance(cc, dict) else {}
+        t = deep_merge(comps.get("tracing") if isinstance(comps.get("tracing"), dict) else {},
+                       cc.get("tracing") if isinstance(cc, dict) and isinstance(cc.get("tracing"), dict) else {})
+        if t.get("enabled") is True and not (t.get("external") or {}).get("queryUrl"):
+            where = f" on cluster {name}" if name else ""
+            problems.append(f"platform.yaml: .components.tracing: enabled{where} needs external.queryUrl (an external "
+                            "Tempo's HTTP API, e.g. http://tempo.example:3200): this release installs no Tempo of its own")
     tz = p.get("timezone")
     if isinstance(tz, str) and not any(e.startswith(".timezone") for e in errs):
         try:
