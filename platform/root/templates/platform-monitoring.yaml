@@ -100,6 +100,17 @@ grafana:
   sidecar:
     dashboards: { enabled: true, label: grafana_dashboard, searchNamespace: ALL }
   resources: { requests: { cpu: 50m, memory: 192Mi }, limits: { memory: 512Mi } }
+  {{- $tracing := include "root.tracing" . | fromJson }}
+  {{- if $tracing.enabled }}
+  # components.tracing: the external Tempo as a datasource (uid tempo). A provisioning file of its own (a key of the
+  # datasources map), not an entry of additionalDataSources: your own additionalDataSources (a list: it replaces)
+  # leave it in place.
+  datasources:
+    tempo.yaml:
+      apiVersion: 1
+      datasources:
+        - { name: Tempo, uid: tempo, type: tempo, access: proxy, url: {{ $tracing.external.queryUrl | quote }} }
+  {{- end }}
   # Grafana needs more than the default 60s to start on a small node: the liveness probe killed it in a loop
   # (exit 137)
   livenessProbe: { httpGet: { path: /api/health, port: 3000 }, initialDelaySeconds: 180, timeoutSeconds: 30, failureThreshold: 10 }

@@ -38,6 +38,9 @@ optional:
 #   monitoring:                    # deep-merged into its Helm values (maps merge, lists replace)
 #     values: { prometheus: { prometheusSpec: { retentionSize: 12GB } } }
 #   cnpg: { enabled: false }
+#   tracing:                       # opt-in: a Grafana datasource for an external Tempo (docs/configuration.md#tracing)
+#     enabled: true
+#     external: { queryUrl: "http://tempo.example:3200", endpoint: "http://tempo.example:4318" }
 
 grafana:
   adminSecret: grafana-admin       # Secret in monitoring with admin-user, admin-password (created by bootstrap)

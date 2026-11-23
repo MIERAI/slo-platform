@@ -451,6 +451,23 @@ class ExistingRepository(Tmp):
         self.edit(self.p, lambda p: p.update(components={"monitoring": {"enabled": "no"}}))
         self.assertProblem(".components.monitoring.enabled: must be boolean")
 
+    def test_tracing(self):
+        ext = {"queryUrl": "http://tempo.example:3200", "endpoint": "http://tempo.example:4318"}
+        self.edit(self.p, lambda p: p.update(components={"tracing": {"enabled": True, "external": ext}}))
+        for real in (False, True):
+            self.assertEqual(self.problems(real), [])
+        self.edit(self.p, lambda p: p.update(components={"tracing": {"enabled": True}}))
+        self.assertProblem(".components.tracing: enabled on cluster lab needs external.queryUrl")
+        # per cluster: enabled on one cluster, the URL at the top level
+        self.edit(self.p, lambda p: (p.update(components={"tracing": {"external": ext}}),
+                                     p["clusters"]["lab"].update(components={"tracing": {"enabled": True}})))
+        for real in (False, True):
+            self.assertEqual(self.problems(real), [])
+        self.edit(self.p, lambda p: p.update(components={"tracing": {"enabled": True, "external": {"queryUrl": "tempo:3200"}}}))
+        self.assertProblem(".components.tracing.external.queryUrl")
+        self.edit(self.p, lambda p: p.update(components={"tracing": {"values": {"x": 1}}}))
+        self.assertProblem(".components.tracing.values: unknown key")
+
     def test_namespace_metadata(self):
         self.edit(self.p, lambda p: p.update(applications={"namespaceLabels": {"example.com/policies": "enforced"},
                                                            "namespaceAnnotations": {"example.com/note": "any text"}}))
