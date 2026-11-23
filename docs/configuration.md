@@ -86,6 +86,11 @@ Warnings (`!`, exit code unchanged): a prod cluster whose `notify` receivers nee
 Sets `product.version` by editing that one line: comments and formatting stay. Check, commit, push; each cluster's root
 Application reads the new version from `platform.yaml` and retargets itself and every platform component.
 
+**Upgrade first, use new keys after.** The root renders `platform.yaml` with the version it runs to learn the new one,
+and that version's schema rejects keys it does not know: a commit that raises the version *and* uses a key the new
+version introduced (e.g. `clusters.<name>.applications`) leaves every root in `ComparisonError` (nothing is deleted;
+nothing syncs). Push the version alone, wait until every root runs it, then the new keys.
+
 ## platform.yaml
 
 `apiVersion: slo-platform/v1`. The same file is the values of the root chart (`platform/root`), which Argo CD renders
