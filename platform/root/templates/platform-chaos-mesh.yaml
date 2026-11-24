@@ -11,7 +11,8 @@ metadata:
   name: platform-chaos-mesh
   namespace: argocd
   # deleting the Application (components.chaos-mesh.enabled: false) also deletes what it installed: a cluster that
-  # turns Chaos Mesh off keeps no daemon, webhooks or CRDs behind
+  # turns Chaos Mesh off keeps no daemon, controller or webhooks behind (the CRDs stay: they carry no tracking
+  # annotation, so Argo CD does not delete them; with no controller they are inert)
   finalizers: [resources-finalizer.argocd.argoproj.io]
 spec:
   project: default

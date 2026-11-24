@@ -247,7 +247,7 @@ The platform components the root chart installs, each an Argo CD Application `pl
 | `logging` | none: a Grafana datasource for an external Loki | only with `enabled: true` (opt-in): [Logs](#logs) |
 
 - `enabled: false` drops the component (its Application; Argo CD prunes what it installed — `chaos-mesh` carries the
-  resources finalizer, so its CRDs and webhooks go too). `enabled: true` is the
+  resources finalizer, so its workloads and webhooks go too; its CRDs stay, inert). `enabled: true` is the
   default and does not override the condition in the last column. What depends on a dropped component is yours to
   provide: Pyrra and the SLOs need the monitoring stack's CRDs, cnpg and chaos-mesh need cert-manager, the canary
   examples need Argo Rollouts.
