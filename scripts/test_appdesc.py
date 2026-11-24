@@ -30,6 +30,9 @@ class NamespaceMetadata(unittest.TestCase):
         self.assertEqual(appdesc.namespace_metadata({"name": "shop", "signedImages": True}, "dev")["labels"],
                          {"slo-platform/app": "shop", "slo-platform/env": "dev", "slo-platform/image-signatures": "required"})
 
+    def test_without_chaos_mesh(self):
+        self.assertEqual(appdesc.namespace_metadata({"name": "shop"}, "dev", chaos=False)["annotations"], {})
+
     def test_precedence(self):
         """platform-wide, app.yaml over it, the platform's own over both"""
         platform = {"applications": {"namespaceLabels": {"a": "platform", "b": "platform", "slo-platform/app": "x"},

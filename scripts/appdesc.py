@@ -36,17 +36,18 @@ def experiment_dirs(platform):
     return [x] if isinstance(x, str) else list(x)
 
 
-def namespace_metadata(d, env, platform=None):
+def namespace_metadata(d, env, platform=None, chaos=True):
     """{labels, annotations} Argo CD gives namespace <name>-<env> (the ApplicationSet's managedNamespaceMetadata):
     platform.yaml applications.namespaceLabels / namespaceAnnotations, app.yaml namespace.labels / annotations over
-    them, the platform's own (slo-platform/*, chaos-mesh.org/inject) over both."""
+    them, the platform's own (slo-platform/*, chaos-mesh.org/inject when the cluster runs chaos-mesh) over both."""
     a = (platform or {}).get("applications") or {}
     ns = d.get("namespace") or {}
     labels = {**(a.get("namespaceLabels") or {}), **(ns.get("labels") or {}),
               "slo-platform/app": d["name"], "slo-platform/env": env}
     if d.get("signedImages"):
         labels["slo-platform/image-signatures"] = "required"
-    annotations = {**(a.get("namespaceAnnotations") or {}), **(ns.get("annotations") or {}), **OWN_ANNOTATIONS}
+    annotations = {**(a.get("namespaceAnnotations") or {}), **(ns.get("annotations") or {}),
+                   **(OWN_ANNOTATIONS if chaos else {})}
     return {"labels": labels, "annotations": annotations}
 
 

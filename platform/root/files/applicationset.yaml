@@ -8,8 +8,8 @@
 #   traffic                     → component <name>-traffic: product repo, chart platform/traffic, values {app, env, scale,
 #                                 peakRpm, requests, day} (synthetic users); not in environments with trafficScale: 0
 # The namespace gets the labels the platform keys on (slo-platform/app, slo-platform/env; slo-platform/image-signatures
-# when signedImages) and the annotation that lets the fault experiments target it (Chaos Mesh only injects into
-# annotated namespaces), over app.yaml's namespace.labels / namespace.annotations, over platform.yaml's
+# when signedImages) and, on clusters that run chaos-mesh, the annotation that lets the fault experiments target it
+# (Chaos Mesh only injects into annotated namespaces), over app.yaml's namespace.labels / namespace.annotations, over platform.yaml's
 # applications.namespaceLabels / namespaceAnnotations (filled in below as Go dict expressions). ignoreDifferences
 # (app.yaml) is passed through, with RespectIgnoreDifferences. A cluster leaves out the applications its
 # clusters.<name>.applications.exclude names (git generator files entries with exclude: true, none without it), and
@@ -113,7 +113,7 @@ spec:
         {{- if and (hasKey . "signedImages") .signedImages }}{{ $_ := set $own "slo-platform/image-signatures" "required" }}{{ end }}
         {{- $ns := dict }}{{ if hasKey . "namespace" }}{{ $ns = .namespace }}{{ end }}
         {{- $labels := merge $own (get $ns "labels" | default dict) ${NAMESPACE_LABELS} }}
-        {{- $annotations := merge (dict "chaos-mesh.org/inject" "enabled") (get $ns "annotations" | default dict) ${NAMESPACE_ANNOTATIONS} }}
-        managedNamespaceMetadata:   # chaos-mesh.org/inject: fault experiments may target it (platform-chaos-mesh)
+        {{- $annotations := merge ${OWN_ANNOTATIONS} (get $ns "annotations" | default dict) ${NAMESPACE_ANNOTATIONS} }}
+        managedNamespaceMetadata:   # chaos-mesh.org/inject (clusters with chaos-mesh): fault experiments may target it
           labels: {{ toJson $labels }}
           annotations: {{ toJson $annotations }}
