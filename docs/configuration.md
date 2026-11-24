@@ -322,6 +322,11 @@ clusters:
   prod: { role: prod, components: { logging: { enabled: true } } }
 ```
 
+With `tracing` on as well, the two datasources link to each other: a log line whose JSON carries
+`"trace_id":"<32 hex digits>"` (api-factory's runtime writes it on every RPC line while tracing is on) gets a
+**TraceID** link that opens the trace in Tempo, and a span in Tempo opens its logs — the Loki stream whose label
+`namespace` is the span's resource attribute `k8s.namespace.name`, ±5 minutes, filtered by the trace id.
+
 ## An existing repository
 
 A GitOps repository that already holds applications (one directory per application with an `app.yaml`, experiments,

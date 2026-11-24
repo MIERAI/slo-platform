@@ -5,6 +5,10 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- `components.tracing` + `components.logging` both on: the two datasources link to each other. Loki's derived field
+  `TraceID` (a JSON log line's `"trace_id":"<32 hex>"`, as api-factory's runtime writes) opens the trace in Tempo, and
+  a span opens its namespace's logs around it filtered by its trace id (`tracesToLogsV2`, tag `k8s.namespace.name` ->
+  label `namespace`). Either one alone renders exactly as before.
 - `components.logging` (opt-in, external only), the same shape as `components.tracing`: `enabled` +
   `external.queryUrl` (and `external.endpoint`, the push API your collector uses, for reference) give
   platform-monitoring's Grafana a Loki datasource (uid `loki`, provisioning file `loki.yaml`). No Application, no

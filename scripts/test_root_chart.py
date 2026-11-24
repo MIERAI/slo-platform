@@ -325,7 +325,16 @@ class RootChart(unittest.TestCase):
         self.assertEqual(g, g0)
         both = helm_values(ok(values(components={"logging": {"enabled": True, "external": ext}, "tracing": tr}),
                               "prod")["platform-monitoring"])["grafana"]["datasources"]
-        self.assertEqual((sorted(both), both["loki.yaml"]), (["loki.yaml", "tempo.yaml"], loki))
+        # both on: the two link to each other (Loki's trace_id -> Tempo; a span -> its namespace's logs)
+        self.assertEqual(sorted(both), ["loki.yaml", "tempo.yaml"])
+        lk, tp = both["loki.yaml"]["datasources"][0], both["tempo.yaml"]["datasources"][0]
+        self.assertEqual(lk.pop("jsonData"), {"derivedFields": [{"name": "TraceID", "matcherRegex": '"trace_id":"([0-9a-f]{32})"',
+                                                                 "datasourceUid": "tempo", "url": "$${__value.raw}"}]})
+        self.assertEqual(both["loki.yaml"], loki)
+        self.assertEqual(tp.pop("jsonData"), {"tracesToLogsV2": {
+            "datasourceUid": "loki", "spanStartTimeShift": "-5m", "spanEndTimeShift": "5m", "filterByTraceID": True,
+            "tags": [{"key": "k8s.namespace.name", "value": "namespace"}]}})
+        self.assertEqual(tp, {"name": "Tempo", "uid": "tempo", "type": "tempo", "access": "proxy", "url": "http://tempo.example:3200"})
         # tracing alone renders exactly as in 0.1.4
         t = helm_values(ok(values(components={"tracing": tr}), "prod")["platform-monitoring"])["grafana"]["datasources"]
         self.assertEqual(list(t), ["tempo.yaml"])
