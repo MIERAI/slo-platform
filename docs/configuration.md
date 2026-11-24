@@ -145,8 +145,8 @@ only for lab clusters, and it additionally refuses to run unless every node carr
 **Namespace metadata.** Argo CD creates each application namespace `<app>-<env>` with the labels and annotations of
 `applications.namespaceLabels` / `namespaceAnnotations`, then app.yaml's `namespace.labels` / `namespace.annotations`
 over them ([app.yaml](app-yaml.md#namespace)), then the platform's own over both: `slo-platform/app`,
-`slo-platform/env`, `slo-platform/image-signatures` (app.yaml `signedImages: true`) and `chaos-mesh.org/inject:
-enabled`. `check` rejects those keys in your maps. Use them for admission policies or pull-secret replication of your
+`slo-platform/env`, `slo-platform/image-signatures` (app.yaml `signedImages: true`) and, on clusters that run
+`chaos-mesh`, `chaos-mesh.org/inject: enabled`. `check` rejects those keys in your maps. Use them for admission policies or pull-secret replication of your
 own that select namespaces by label.
 
 ### extras
@@ -241,7 +241,8 @@ The platform components the root chart installs, each an Argo CD Application `pl
 | `tracing` | none: a Grafana datasource for an external Tempo | only with `enabled: true` (opt-in): [Tracing](#tracing) |
 | `logging` | none: a Grafana datasource for an external Loki | only with `enabled: true` (opt-in): [Logs](#logs) |
 
-- `enabled: false` drops the component (its Application; Argo CD prunes what it installed). `enabled: true` is the
+- `enabled: false` drops the component (its Application; Argo CD prunes what it installed — `chaos-mesh` carries the
+  resources finalizer, so its CRDs and webhooks go too). `enabled: true` is the
   default and does not override the condition in the last column. What depends on a dropped component is yours to
   provide: Pyrra and the SLOs need the monitoring stack's CRDs, cnpg and chaos-mesh need cert-manager, the canary
   examples need Argo Rollouts.

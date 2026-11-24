@@ -4,6 +4,15 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-24
+
+### Changed
+- `platform-chaos-mesh` carries Argo CD's resources finalizer: turning `chaos-mesh` off for a cluster
+  (`components.chaos-mesh.enabled: false`, top level or per cluster) now deletes what it installed (daemon,
+  controller, webhooks, CRDs) instead of leaving it running without an Application.
+- Application namespaces get `chaos-mesh.org/inject: enabled` only on clusters that run `chaos-mesh`. With it on
+  (the default) the render is unchanged apart from the finalizer. A patch release on top of 0.1.5.
+
 ## [0.1.5] - 2026-11-23
 
 ### Added

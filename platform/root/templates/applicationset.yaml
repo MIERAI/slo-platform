@@ -10,6 +10,7 @@ placeholders, not a Helm template.
     | replace "${ENVIRONMENTS_IF}" (include "root.environmentsIf" .)
     | replace "${ENVIRONMENTS_END}" (ternary "{{- end }}" "" (ne (include "root.environmentsIf" .) ""))
     | replace "${NAMESPACE_LABELS}" (include "root.goDict" .Values.applications.namespaceLabels)
+    | replace "${OWN_ANNOTATIONS}" (ternary "(dict \"chaos-mesh.org/inject\" \"enabled\")" "(dict)" (eq (include "root.enabled" (list . "chaos-mesh")) "true"))
     | replace "${NAMESPACE_ANNOTATIONS}" (include "root.goDict" .Values.applications.namespaceAnnotations)
     | replace "${PRODUCT_REPO}" .Values.product.repo
     | replace "${PRODUCT_VERSION}" (.Values.product.version | toString)
