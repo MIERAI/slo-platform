@@ -4,6 +4,12 @@ All notable changes; the format follows [Keep a Changelog](https://keepachangelo
 
 ## [Unreleased]
 
+### Changed
+- `platform-chaos-mesh` carries Argo CD's resources finalizer: turning `chaos-mesh` off for a cluster
+  (`components.chaos-mesh.enabled: false`, top level or per cluster) deletes what it installed (daemon, controller,
+  webhooks, CRDs). Application namespaces get `chaos-mesh.org/inject: enabled` only on clusters that run
+  `chaos-mesh`; with it on (the default) the render differs only by the finalizer. Also released for 0.1.x as 0.1.6.
+
 ### Added
 - `components.logging` (opt-in, external only), the same shape as `components.tracing`: `enabled` +
   `external.queryUrl` (and `external.endpoint`, the push API your collector uses, for reference) give
