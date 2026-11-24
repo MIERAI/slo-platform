@@ -395,6 +395,26 @@ class RootChart(unittest.TestCase):
         plain = ok(BASE, "prod")["applications"]["spec"]["templatePatch"]
         self.assertIn('(get $ns "labels" | default dict) (dict) }}', plain)
 
+    def test_chaos_mesh_off_cleans_up(self):
+        # the Application deletes what it installed when it goes; namespaces get the inject annotation only where
+        # Chaos Mesh runs
+        on = ok(BASE, "prod")
+        self.assertEqual(on["platform-chaos-mesh"]["metadata"]["finalizers"], ["resources-finalizer.argocd.argoproj.io"])
+        self.assertIn('merge (dict "chaos-mesh.org/inject" "enabled") (get $ns "annotations"',
+                      on["applications"]["spec"]["templatePatch"])
+        for v in (values(components={"chaos-mesh": {"enabled": False}}),
+                  values(clusters={**BASE["clusters"], "prod": {**BASE["clusters"]["prod"],
+                                                               "components": {"chaos-mesh": {"enabled": False}}}})):
+            off = ok(v, "prod")
+            self.assertNotIn("platform-chaos-mesh", off)
+            patch = off["applications"]["spec"]["templatePatch"]
+            self.assertIn('merge (dict) (get $ns "annotations"', patch)
+            self.assertNotIn("chaos-mesh.org/inject", patch.split("managedNamespaceMetadata")[0].split("$annotations :=")[-1])
+            self.assertEqual(patch.replace('merge (dict) (get', 'merge (dict "chaos-mesh.org/inject" "enabled") (get'),
+                             on["applications"]["spec"]["templatePatch"])
+        self.assertIn("platform-chaos-mesh", ok(values(clusters={**BASE["clusters"], "prod": {**BASE["clusters"]["prod"],
+                      "components": {"chaos-mesh": {"enabled": False}}}}), "lab"))   # other clusters keep it
+
     def test_product_version_everywhere(self):
         v = values(product={"repo": "https://git.example/p.git", "version": "v9.9.9"})
         for name, o in ok(v, "lab").items():
